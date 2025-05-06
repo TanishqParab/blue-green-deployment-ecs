@@ -33,7 +33,7 @@ module "ecr" {
   source            = "./modules/ecr"
   repository_name   = "blue-green-app"
   app_py_path       = "${path.module}/modules/ecs/scripts/app.py"
-  dockerfile_path   = "${path.module}/modules/ecs/scripts/docker"
+  dockerfile_path   = "${path.module}/modules/ecs/scripts/Dockerfile"
   aws_region        = var.aws_region
   skip_docker_build = false
 }
