@@ -148,7 +148,7 @@ azure_vm = {
   vm_size        = "Standard_B2s"
   admin_username = "azureuser"
   ssh_key_name   = "azure-ssh-key"
-  ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC..." # Replace with your SSH public key
+  ssh_public_key = "$(cat /home/ec2-user/azure-vm-key.pub)"
 
   # Multiple applications configuration
   vm_application = {
