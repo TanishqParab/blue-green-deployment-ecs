@@ -15,7 +15,8 @@ provider "aws" {
 # Azure Provider - Uncomment when using Azure
 provider "azurerm" {
   features {}
-  subscription_id = "2b4577df-bb3c-4dda-bd5f-5f6bd80f80d2"
+  subscription_id                 = "2b4577df-bb3c-4dda-bd5f-5f6bd80f80d2"
+  resource_provider_registrations = "none"
 }
 
 /*
