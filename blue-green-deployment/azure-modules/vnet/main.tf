@@ -2,28 +2,17 @@
 # Azure VNet Resources
 ############################################
 
-# Resource Group
-resource "azurerm_resource_group" "main" {
-  name     = var.resource_group_name
-  location = var.location
-
-  tags = merge(
-    {
-      Name        = var.resource_group_name
-      Environment = var.environment
-      Module      = var.module_name
-      Terraform   = var.terraform_managed
-    },
-    var.additional_tags
-  )
+# Use existing Resource Group
+data "azurerm_resource_group" "main" {
+  name = var.resource_group_name
 }
 
 # Virtual Network (VNet) - Azure equivalent of AWS VPC
 resource "azurerm_virtual_network" "main" {
   name                = var.vnet_name
   address_space       = [var.vnet_cidr]
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
+  location            = data.azurerm_resource_group.main.location
+  resource_group_name = data.azurerm_resource_group.main.name
 
   tags = merge(
     {
@@ -45,7 +34,7 @@ resource "azurerm_subnet" "public_subnets" {
   for_each = { for idx, cidr in var.public_subnet_cidrs : idx => cidr }
 
   name                 = "${var.subnet_name_prefix}-${each.key + 1}"
-  resource_group_name  = azurerm_resource_group.main.name
+  resource_group_name  = data.azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [each.value]
 }
@@ -59,7 +48,7 @@ resource "azurerm_subnet" "private_subnets" {
   for_each = var.create_private_subnets ? { for idx, cidr in var.private_subnet_cidrs : idx => cidr } : {}
 
   name                 = "${var.private_subnet_name_prefix}-${each.key + 1}"
-  resource_group_name  = azurerm_resource_group.main.name
+  resource_group_name  = data.azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [each.value]
 }
@@ -69,8 +58,8 @@ resource "azurerm_public_ip" "nat_gateway" {
   count = var.create_private_subnets && var.create_nat_gateway ? 1 : 0
 
   name                = "${var.vnet_name}-${var.nat_gateway_ip_suffix}"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
+  location            = data.azurerm_resource_group.main.location
+  resource_group_name = data.azurerm_resource_group.main.name
   allocation_method   = "Static"
   sku                 = "Standard"
 
@@ -90,8 +79,8 @@ resource "azurerm_nat_gateway" "main" {
   count = var.create_private_subnets && var.create_nat_gateway ? 1 : 0
 
   name                = "${var.vnet_name}-${var.nat_gateway_name_suffix}"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
+  location            = data.azurerm_resource_group.main.location
+  resource_group_name = data.azurerm_resource_group.main.name
   sku_name            = "Standard"
 
   tags = merge(
