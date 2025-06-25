@@ -1,11 +1,11 @@
 output "resource_group_name" {
   description = "The name of the Azure Resource Group"
-  value       = azurerm_resource_group.main.name
+  value       = data.azurerm_resource_group.main.name
 }
 
 output "resource_group_location" {
   description = "The location of the Azure Resource Group"
-  value       = azurerm_resource_group.main.location
+  value       = data.azurerm_resource_group.main.location
 }
 
 output "vnet_id" {
