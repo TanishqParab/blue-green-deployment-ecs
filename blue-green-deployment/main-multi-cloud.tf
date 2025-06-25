@@ -288,6 +288,8 @@ module "azure_nsg" {
   module_name       = var.azure_nsg.module_name
   terraform_managed = var.azure_nsg.terraform_managed
   additional_tags   = merge(var.azure.tags, var.additional_tags)
+
+  depends_on = [module.azure_vnet]
 }
 
 # Azure Application Gateway Module
