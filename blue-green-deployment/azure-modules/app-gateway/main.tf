@@ -82,40 +82,27 @@ resource "azurerm_application_gateway" "main" {
     protocol                       = var.listener_protocol
   }
 
-  # Default routing rule
+  # Single path-based routing rule
   request_routing_rule {
-    name                       = "default-rule"
-    rule_type                  = "Basic"
+    name                       = "main-routing-rule"
+    rule_type                  = "PathBasedRouting"
     http_listener_name         = "http-listener"
-    backend_address_pool_name  = "${keys(var.application_target_groups)[0]}-blue-pool"
-    backend_http_settings_name = "http-settings"
+    url_path_map_name          = "main-path-map"
     priority                   = 1
   }
 
-  # Path-based routing rules for each application
-  dynamic "request_routing_rule" {
-    for_each = var.application_paths
-    content {
-      name                        = "${request_routing_rule.key}-rule"
-      rule_type                   = "PathBasedRouting"
-      http_listener_name          = "http-listener"
-      url_path_map_name           = "${request_routing_rule.key}-path-map"
-      priority                    = request_routing_rule.value.priority + 1
-    }
-  }
+  # Single URL Path Map with multiple path rules
+  url_path_map {
+    name                               = "main-path-map"
+    default_backend_address_pool_name  = "${keys(var.application_target_groups)[0]}-blue-pool"
+    default_backend_http_settings_name = "http-settings"
 
-  # URL Path Maps for path-based routing
-  dynamic "url_path_map" {
-    for_each = var.application_paths
-    content {
-      name                               = "${url_path_map.key}-path-map"
-      default_backend_address_pool_name  = "${url_path_map.key}-blue-pool"
-      default_backend_http_settings_name = "http-settings"
-
-      path_rule {
-        name                       = "${url_path_map.key}-path-rule"
-        paths                      = [url_path_map.value.path_pattern]
-        backend_address_pool_name  = "${url_path_map.key}-blue-pool"
+    dynamic "path_rule" {
+      for_each = var.application_paths
+      content {
+        name                       = "${path_rule.key}-path-rule"
+        paths                      = [path_rule.value.path_pattern]
+        backend_address_pool_name  = "${path_rule.key}-blue-pool"
         backend_http_settings_name = "http-settings"
       }
     }
