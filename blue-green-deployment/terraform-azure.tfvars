@@ -198,7 +198,7 @@ LXVzZXJAaXAtMTcyLTMxLTg2LTM5LmVjMi5pbnR1cm5hbAECAwQFBg==
 -----END OPENSSH PRIVATE KEY-----
 EOF
 
-  ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDIRVohwaiaRbtma+sK3KishUGfgAQ..."
+  ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDIRVohwaiaRbtma+sK3KishUGfgAQEMVBZRe7U0HvoOZJeJRwnNNdKbemRsPKumrPw1Ghx4vGKElDmSrO0TIqID0sUDyyv94lOCa+T1pOYfiTfI1YtGbMEVGI+c4TqgTK61DtfoC0bM1x3jQP09Je+fG+wHOKO+thLrOGUPOyUY4wqqEdxXxNZwQexkJOLHA1xOomCAgnkQTUwF9inTNznDxxu7jvwKbNkdQ3MY4jT8hQnp3omS56bTDPprYc/AY+a4h7M1B9lw18Mtwr5A/UcXAaF/6jd6ikhClxG12NoIagBNEcNwAvAHu4OozLZaRi7Z/cd6dVMPeT/OfqTsm0VuDW0pMzYHk3TXXKXOqeGfzk315qXbgbMwjtqRJbRrfhpIAm5Ak1M0zjT0N5K4Rtd8XCyCZXEhWEUjgVNCIXRFGRI/vFlhKlzNS6tWRR6tB846m1DAXvqOCrCSUu4qyBDFiE/kGpdaQgqmf/HFvlOvEyR7s0gu972u64z23k6BFHiNuSWvc6lzAya7CuGkzuJ/A/beZi2l5blXoPzXPay/UM+TxlN/mmQ8URhuFOC8FL7TL1R2nwmlLEJKFMk2IUbdjM7u8SbsKgFf9LWwv10IKrJb//0HVHw2RVShix9vxg8CD5FKChtsIgwphJVvSWsNNcjjeVX1yi0EBX0cLjC1Q== ec2-user@ip-172-31-86-39.ec2.internal"
 
   # Multiple applications configuration
   vm_application = {
