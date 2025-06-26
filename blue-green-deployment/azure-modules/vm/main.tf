@@ -124,7 +124,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
       type        = "ssh"
       user        = var.admin_username
       private_key = local.ssh_keys.private_key
-      host        = self.public_ip
+      host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
   }
@@ -136,7 +136,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
       type        = "ssh"
       user        = var.admin_username
       private_key = local.ssh_keys.private_key
-      host        = self.public_ip
+      host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
   }
@@ -148,7 +148,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
       type        = "ssh"
       user        = var.admin_username
       private_key = local.ssh_keys.private_key
-      host        = self.public_ip
+      host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
   }
@@ -169,7 +169,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
       type        = "ssh"
       user        = var.admin_username
       private_key = local.ssh_keys.private_key
-      host        = self.public_ip
+      host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
       timeout     = "10m"
     }
   }
@@ -282,7 +282,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
       type        = "ssh"
       user        = var.admin_username
       private_key = local.ssh_keys.private_key
-      host        = self.public_ip
+      host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
   }
@@ -294,7 +294,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
       type        = "ssh"
       user        = var.admin_username
       private_key = local.ssh_keys.private_key
-      host        = self.public_ip
+      host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
   }
@@ -306,7 +306,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
       type        = "ssh"
       user        = var.admin_username
       private_key = local.ssh_keys.private_key
-      host        = self.public_ip
+      host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
   }
@@ -327,7 +327,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
       type        = "ssh"
       user        = var.admin_username
       private_key = local.ssh_keys.private_key
-      host        = self.public_ip
+      host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
       timeout     = "10m"
     }
   }
