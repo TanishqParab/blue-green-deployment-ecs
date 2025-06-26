@@ -749,14 +749,14 @@ variable "azure_vm" {
     terraform_managed = optional(string, "true")
   })
   default = {
-    vm_size             = "Standard_B2s"
-    admin_username      = "azureuser"
-    ssh_key_name        = "azure-ssh-key"
-    key_vault_name      = "blue-green-keyvault"
-    ssh_key_secret_name = "blue-green-ssh-keys"
-    vm_application      = {}
-    module_name         = "azure-vm"
-    terraform_managed   = "true"
+    vm_size         = "Standard_B2s"
+    admin_username  = "azureuser"
+    ssh_key_name    = "azure-ssh-key"
+    ssh_private_key = ""
+    ssh_public_key  = ""
+    vm_application  = {}
+    module_name     = "azure-vm"
+    terraform_managed = "true"
   }
 }
 
