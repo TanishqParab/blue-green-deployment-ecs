@@ -2,19 +2,34 @@
 # Azure VM Resources - Blue/Green Deployment
 ############################################
 
+# Get current client configuration
+data "azurerm_client_config" "current" {}
+
 # Key Vault Configuration
 data "azurerm_key_vault" "main" {
   name                = var.key_vault_name
   resource_group_name = var.resource_group_name
 }
 
+# Access policy for Terraform service principal
+resource "azurerm_key_vault_access_policy" "terraform" {
+  key_vault_id = data.azurerm_key_vault.main.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = data.azurerm_client_config.current.object_id
+
+  secret_permissions = [
+    "Get",
+    "List"
+  ]
+}
+
 data "azurerm_key_vault_secret" "ssh_keys" {
   name         = var.ssh_key_secret_name
   key_vault_id = data.azurerm_key_vault.main.id
+  depends_on   = [azurerm_key_vault_access_policy.terraform]
 }
 
 locals {
-  # Parse the secret JSON - expected format: {"private_key": "...", "public_key": "..."}
   ssh_keys = jsondecode(data.azurerm_key_vault_secret.ssh_keys.value)
 }
 
