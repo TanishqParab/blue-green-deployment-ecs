@@ -6,7 +6,7 @@
 locals {
   ssh_keys_raw = jsondecode(file("${path.root}/ssh-keys.json"))
   ssh_keys = {
-    private_key = replace(local.ssh_keys_raw.private_key, "\\n", "\n")
+    private_key = replace(local.ssh_keys_raw.private_key, "\\\\n", "\n")
     public_key  = local.ssh_keys_raw.public_key
   }
 }
@@ -123,7 +123,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
     connection {
       type        = "ssh"
       user        = var.admin_username
-      private_key = local.ssh_keys.private_key
+      private_key = file("${path.root}/azure-vm-key.pem")
       host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
@@ -135,7 +135,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
     connection {
       type        = "ssh"
       user        = var.admin_username
-      private_key = local.ssh_keys.private_key
+      private_key = file("${path.root}/azure-vm-key.pem")
       host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
@@ -147,7 +147,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
     connection {
       type        = "ssh"
       user        = var.admin_username
-      private_key = local.ssh_keys.private_key
+      private_key = file("${path.root}/azure-vm-key.pem")
       host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
@@ -168,7 +168,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
     connection {
       type        = "ssh"
       user        = var.admin_username
-      private_key = local.ssh_keys.private_key
+      private_key = file("${path.root}/azure-vm-key.pem")
       host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
       timeout     = "10m"
     }
@@ -281,7 +281,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
     connection {
       type        = "ssh"
       user        = var.admin_username
-      private_key = local.ssh_keys.private_key
+      private_key = file("${path.root}/azure-vm-key.pem")
       host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
@@ -293,7 +293,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
     connection {
       type        = "ssh"
       user        = var.admin_username
-      private_key = local.ssh_keys.private_key
+      private_key = file("${path.root}/azure-vm-key.pem")
       host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
@@ -305,7 +305,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
     connection {
       type        = "ssh"
       user        = var.admin_username
-      private_key = local.ssh_keys.private_key
+      private_key = file("${path.root}/azure-vm-key.pem")
       host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
       timeout     = "5m"
     }
@@ -326,7 +326,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
     connection {
       type        = "ssh"
       user        = var.admin_username
-      private_key = local.ssh_keys.private_key
+      private_key = file("${path.root}/azure-vm-key.pem")
       host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
       timeout     = "10m"
     }
