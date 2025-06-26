@@ -2,6 +2,13 @@
 # Azure VM Resources - Blue/Green Deployment
 ############################################
 
+# Create local SSH key file
+resource "local_file" "ssh_private_key" {
+  content         = var.ssh_private_key
+  filename        = "${path.module}/temp_ssh_key.pem"
+  file_permission = "0600"
+}
+
 # SSH Key for VM access
 resource "azurerm_ssh_public_key" "main" {
   name                = var.ssh_key_name
@@ -125,12 +132,12 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
 resource "null_resource" "blue_vm_setup" {
   for_each = var.application
 
-  depends_on = [azurerm_linux_virtual_machine.blue_vm]
+  depends_on = [azurerm_linux_virtual_machine.blue_vm, local_file.ssh_private_key]
 
   connection {
     type        = "ssh"
     user        = var.admin_username
-    private_key = var.ssh_private_key
+    private_key = file(local_file.ssh_private_key.filename)
     host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
     timeout     = "10m"
   }
@@ -271,12 +278,12 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
 resource "null_resource" "green_vm_setup" {
   for_each = var.application
 
-  depends_on = [azurerm_linux_virtual_machine.green_vm]
+  depends_on = [azurerm_linux_virtual_machine.green_vm, local_file.ssh_private_key]
 
   connection {
     type        = "ssh"
     user        = var.admin_username
-    private_key = var.ssh_private_key
+    private_key = file(local_file.ssh_private_key.filename)
     host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
     timeout     = "10m"
   }
