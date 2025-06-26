@@ -1,0 +1,311 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - python3
+  - python3-pip
+  - dos2unix
+  - nginx
+  - git
+  - unzip
+  - curl
+  - wget
+
+write_files:
+  - path: /home/${admin_username}/install_dependencies.sh
+    content: |
+      #!/bin/bash
+      # Update package manager
+      sudo apt-get update -y
+      
+      # Install Python and dependencies
+      sudo apt-get install -y python3 python3-pip git unzip curl wget
+      
+      # Install Flask (for the demo app)
+      pip3 install flask
+      
+      # Install Azure CLI
+      curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+      
+      # Install Java (Required for other tools if needed)
+      sudo apt-get install -y openjdk-17-jdk
+      
+      # Install Terraform
+      wget -O terraform.zip https://releases.hashicorp.com/terraform/1.5.7/terraform_1.5.7_linux_amd64.zip
+      unzip terraform.zip
+      sudo mv terraform /usr/local/bin/
+      rm terraform.zip
+      
+      echo "Installation of dependencies completed successfully!"
+    owner: ${admin_username}:${admin_username}
+    permissions: '0755'
+
+  - path: /home/${admin_username}/app_${app_name}.py
+    content: |
+      %{ if app_name == "app_1" }
+      from flask import Flask, jsonify, render_template_string, request, redirect, url_for
+      import datetime
+      import uuid
+      
+      app = Flask(__name__)
+      app_prefix = "/app1"  # Path prefix for all routes
+      
+      # In-memory storage for blog posts
+      blog_posts = [
+          {
+              "id": "1",
+              "title": "Welcome to Blue-Green Deployment Blog",
+              "content": "This is a demo #2 of a blog application running with blue-green deployment on Azure VM.",
+              "author": "Admin",
+              "date": "2023-06-15"
+          },
+          {
+              "id": "2",
+              "title": "Benefits of Blue-Green Deployment",
+              "content": "Blue-green deployment is a technique that reduces downtime and risk by running two identical production environments called Blue and Green.",
+              "author": "DevOps Engineer",
+              "date": "2023-06-16"
+          }
+      ]
+      
+      # HTML template for the blog application
+      BLOG_TEMPLATE = '''
+      <!DOCTYPE html>
+      <html>
+          <head>
+              <title>Tech Blogs</title>
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <style>
+                  body {
+                      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                      line-height: 1.6;
+                      color: #333;
+                      margin: 0;
+                      padding: 0;
+                      background-color: #f8f9fa;
+                  }
+                  .container {
+                      max-width: 1000px;
+                      margin: 0 auto;
+                      padding: 20px;
+                  }
+                  header {
+                      background-color: #007bff;
+                      color: white;
+                      padding: 1rem;
+                      text-align: center;
+                      margin-bottom: 2rem;
+                      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+                  }
+              </style>
+          </head>
+          <body>
+              <header>
+                  <h1>Tech Blogs</h1>
+                  <p>A demonstration of blue-green deployment on Azure VM</p>
+              </header>
+              <div class="container">
+                  <h2>Welcome to App 1!</h2>
+                  <p>This is the blog application running on Azure VM.</p>
+              </div>
+          </body>
+      </html>
+      '''
+      
+      @app.route('/')
+      @app.route('/app1')
+      @app.route('/app1/')
+      def home():
+          return render_template_string(BLOG_TEMPLATE)
+      
+      @app.route('/health')
+      @app.route('/app1/health')
+      def health():
+          return jsonify({
+              "status": "healthy",
+              "version": "V10",
+              "service": "blue-green-app-1"
+          }), 200
+      
+      if __name__ == '__main__':
+          app.run(host='0.0.0.0', port=80)
+      %{ endif }
+      %{ if app_name == "app_2" }
+      #!/usr/bin/env python3
+      from flask import Flask, jsonify
+      import os
+      import socket
+      
+      app = Flask(__name__)
+      
+      @app.route('/')
+      def home():
+          return jsonify({
+              'message': 'Hello from App 2 - Azure VM!',
+              'app': 'app_2',
+              'status': 'running',
+              'deployment': os.environ.get('DEPLOYMENT_TYPE', 'blue'),
+              'hostname': socket.gethostname(),
+              'platform': 'Azure VM'
+          })
+      
+      @app.route('/health')
+      def health():
+          return jsonify({
+              'status': 'healthy',
+              'app': 'app_2',
+              'platform': 'Azure VM'
+          })
+      
+      @app.route('/app2/')
+      def app_specific():
+          return jsonify({
+              'message': 'Welcome to App 2 on Azure!',
+              'app': 'app_2',
+              'path': '/app2/',
+              'status': 'running',
+              'deployment': os.environ.get('DEPLOYMENT_TYPE', 'blue'),
+              'hostname': socket.gethostname(),
+              'platform': 'Azure VM'
+          })
+      
+      @app.route('/app2/info')
+      def app_info():
+          return jsonify({
+              'app_name': 'Application 2',
+              'version': '1.0.0',
+              'description': 'Blue-Green Deployment App 2 on Azure VM',
+              'endpoints': [
+                  '/',
+                  '/health',
+                  '/app2/',
+                  '/app2/info'
+              ],
+              'platform': 'Azure VM',
+              'deployment': os.environ.get('DEPLOYMENT_TYPE', 'blue')
+          })
+      
+      if __name__ == '__main__':
+          app.run(host='0.0.0.0', port=5000, debug=False)
+      %{ endif }
+      %{ if app_name == "app_3" }
+      #!/usr/bin/env python3
+      from flask import Flask, jsonify
+      import os
+      import socket
+      
+      app = Flask(__name__)
+      
+      @app.route('/')
+      def home():
+          return jsonify({
+              'message': 'Hello from App 3 - Azure VM!',
+              'app': 'app_3',
+              'status': 'running',
+              'deployment': os.environ.get('DEPLOYMENT_TYPE', 'blue'),
+              'hostname': socket.gethostname(),
+              'platform': 'Azure VM'
+          })
+      
+      @app.route('/health')
+      def health():
+          return jsonify({
+              'status': 'healthy',
+              'app': 'app_3',
+              'platform': 'Azure VM'
+          })
+      
+      @app.route('/app3/')
+      def app_specific():
+          return jsonify({
+              'message': 'Welcome to App 3 on Azure!',
+              'app': 'app_3',
+              'path': '/app3/',
+              'status': 'running',
+              'deployment': os.environ.get('DEPLOYMENT_TYPE', 'blue'),
+              'hostname': socket.gethostname(),
+              'platform': 'Azure VM'
+          })
+      
+      @app.route('/app3/info')
+      def app_info():
+          return jsonify({
+              'app_name': 'Application 3',
+              'version': '1.0.0',
+              'description': 'Blue-Green Deployment App 3 on Azure VM',
+              'endpoints': [
+                  '/',
+                  '/health',
+                  '/app3/',
+                  '/app3/info'
+              ],
+              'platform': 'Azure VM',
+              'deployment': os.environ.get('DEPLOYMENT_TYPE', 'blue')
+          })
+      
+      if __name__ == '__main__':
+          app.run(host='0.0.0.0', port=5000, debug=False)
+      %{ endif }
+    owner: ${admin_username}:${admin_username}
+    permissions: '0644'
+
+  - path: /home/${admin_username}/setup_flask_service.py
+    content: |
+      import os
+      import sys
+      import subprocess
+      
+      app_name = sys.argv[1] if len(sys.argv) > 1 else "default"
+      
+      service_name = f"flask-app-{app_name}"
+      service_file = f"/etc/systemd/system/{service_name}.service"
+      app_script = f"/home/${admin_username}/app_{app_name}.py"
+      
+      # Stop and disable existing service if running
+      print(f"Stopping and disabling existing service {service_name} if any...")
+      subprocess.run(["sudo", "systemctl", "stop", service_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+      subprocess.run(["sudo", "systemctl", "disable", service_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+      
+      # Create systemd service file content
+      service_content = f"""[Unit]
+      Description=Flask App for {app_name}
+      After=network.target
+      
+      [Service]
+      User=root
+      WorkingDirectory=/home/${admin_username}
+      ExecStart=/usr/bin/python3 {app_script}
+      Restart=always
+      
+      [Install]
+      WantedBy=multi-user.target
+      """
+      
+      # Write service file
+      with open(service_file, "w") as f:
+          f.write(service_content)
+      
+      # Reload systemd daemon to pick up new service file
+      print("Reloading systemd daemon...")
+      subprocess.run(["sudo", "systemctl", "daemon-reload"])
+      
+      # Enable and start the new service
+      print(f"Enabling and starting service {service_name}...")
+      subprocess.run(["sudo", "systemctl", "enable", service_name])
+      subprocess.run(["sudo", "systemctl", "start", service_name])
+      
+      print(f"Flask service for {app_name} has been set up and started.")
+    owner: ${admin_username}:${admin_username}
+    permissions: '0755'
+
+runcmd:
+  - sleep 30
+  - sudo apt-get update
+  - sudo apt-get install -y dos2unix
+  - dos2unix /home/${admin_username}/install_dependencies.sh
+  - dos2unix /home/${admin_username}/setup_flask_service.py
+  - chmod +x /home/${admin_username}/install_dependencies.sh
+  - chmod +x /home/${admin_username}/setup_flask_service.py
+  - sudo /bin/bash /home/${admin_username}/install_dependencies.sh
+  - sudo python3 /home/${admin_username}/setup_flask_service.py ${app_name}
