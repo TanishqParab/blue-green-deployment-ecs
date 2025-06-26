@@ -4,7 +4,11 @@
 
 # SSH Keys from local file
 locals {
-  ssh_keys = jsondecode(file("${path.root}/ssh-keys.json"))
+  ssh_keys_raw = jsondecode(file("${path.root}/ssh-keys.json"))
+  ssh_keys = {
+    private_key = replace(local.ssh_keys_raw.private_key, "\\n", "\n")
+    public_key  = local.ssh_keys_raw.public_key
+  }
 }
 
 # SSH Key for VM access
@@ -116,36 +120,58 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
   provisioner "file" {
     source      = "${path.module}/scripts/install_dependencies.sh"
     destination = "/home/${var.admin_username}/install_dependencies.sh"
+    connection {
+      type        = "ssh"
+      user        = var.admin_username
+      private_key = local.ssh_keys.private_key
+      host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
+      timeout     = "5m"
+    }
   }
 
   provisioner "file" {
     source      = "${path.module}/scripts/app_${replace(each.key, "app_", "")}.py"
-    destination = "/home/${var.admin_username}/app_${each.key}.py"
+    destination = "/home/${var.admin_username}/app.py"
+    connection {
+      type        = "ssh"
+      user        = var.admin_username
+      private_key = local.ssh_keys.private_key
+      host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
+      timeout     = "5m"
+    }
   }
 
   provisioner "file" {
     source      = "${path.module}/scripts/setup_flask_service.py"
     destination = "/home/${var.admin_username}/setup_flask_service.py"
+    connection {
+      type        = "ssh"
+      user        = var.admin_username
+      private_key = local.ssh_keys.private_key
+      host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
+      timeout     = "5m"
+    }
   }
 
   provisioner "remote-exec" {
     inline = [
+      "sleep 30",
+      "sudo apt-get update",
       "sudo apt-get install -y dos2unix",
       "dos2unix /home/${var.admin_username}/install_dependencies.sh",
       "dos2unix /home/${var.admin_username}/setup_flask_service.py",
       "chmod +x /home/${var.admin_username}/install_dependencies.sh",
       "chmod +x /home/${var.admin_username}/setup_flask_service.py",
       "sudo /bin/bash /home/${var.admin_username}/install_dependencies.sh",
-      "echo 'Setting up service for app ${each.key}'",
       "sudo python3 /home/${var.admin_username}/setup_flask_service.py ${each.key}"
     ]
-  }
-
-  connection {
-    type        = "ssh"
-    user        = var.admin_username
-    private_key = local.ssh_keys.private_key
-    host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
+    connection {
+      type        = "ssh"
+      user        = var.admin_username
+      private_key = local.ssh_keys.private_key
+      host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
+      timeout     = "10m"
+    }
   }
 
   tags = merge(
@@ -252,36 +278,58 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
   provisioner "file" {
     source      = "${path.module}/scripts/install_dependencies.sh"
     destination = "/home/${var.admin_username}/install_dependencies.sh"
+    connection {
+      type        = "ssh"
+      user        = var.admin_username
+      private_key = local.ssh_keys.private_key
+      host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
+      timeout     = "5m"
+    }
   }
 
   provisioner "file" {
     source      = "${path.module}/scripts/app_${replace(each.key, "app_", "")}.py"
-    destination = "/home/${var.admin_username}/app_${each.key}.py"
+    destination = "/home/${var.admin_username}/app.py"
+    connection {
+      type        = "ssh"
+      user        = var.admin_username
+      private_key = local.ssh_keys.private_key
+      host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
+      timeout     = "5m"
+    }
   }
 
   provisioner "file" {
     source      = "${path.module}/scripts/setup_flask_service.py"
     destination = "/home/${var.admin_username}/setup_flask_service.py"
+    connection {
+      type        = "ssh"
+      user        = var.admin_username
+      private_key = local.ssh_keys.private_key
+      host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
+      timeout     = "5m"
+    }
   }
 
   provisioner "remote-exec" {
     inline = [
+      "sleep 30",
+      "sudo apt-get update",
       "sudo apt-get install -y dos2unix",
       "dos2unix /home/${var.admin_username}/install_dependencies.sh",
       "dos2unix /home/${var.admin_username}/setup_flask_service.py",
       "chmod +x /home/${var.admin_username}/install_dependencies.sh",
       "chmod +x /home/${var.admin_username}/setup_flask_service.py",
       "sudo /bin/bash /home/${var.admin_username}/install_dependencies.sh",
-      "echo 'Setting up service for app ${each.key}'",
       "sudo python3 /home/${var.admin_username}/setup_flask_service.py ${each.key}"
     ]
-  }
-
-  connection {
-    type        = "ssh"
-    user        = var.admin_username
-    private_key = local.ssh_keys.private_key
-    host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
+    connection {
+      type        = "ssh"
+      user        = var.admin_username
+      private_key = local.ssh_keys.private_key
+      host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
+      timeout     = "10m"
+    }
   }
 
   tags = merge(
