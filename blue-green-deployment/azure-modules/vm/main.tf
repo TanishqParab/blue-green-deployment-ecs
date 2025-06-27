@@ -2,11 +2,6 @@
 # Azure VM Resources - Blue/Green Deployment
 ############################################
 
-# Read SSH private key from file
-data "local_file" "ssh_private_key" {
-  filename = "${path.root}/azure-vm-key.pem"
-}
-
 # SSH Key for VM access
 resource "azurerm_ssh_public_key" "main" {
   name                = var.ssh_key_name
@@ -89,8 +84,9 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
   resource_group_name = var.resource_group_name
   size                = var.vm_size
   admin_username      = var.admin_username
+  admin_password      = "TempPassword123!"
 
-  disable_password_authentication = true
+  disable_password_authentication = false
 
   network_interface_ids = [
     azurerm_network_interface.blue_vm_nic[each.key].id,
@@ -113,13 +109,12 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
     version   = var.vm_image_version
   }
 
-  # Single connection block for all provisioners
   connection {
-    type        = "ssh"
-    user        = var.admin_username
-    private_key = data.local_file.ssh_private_key.content
-    host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
-    timeout     = "5m"
+    type     = "ssh"
+    user     = var.admin_username
+    password = "TempPassword123!"
+    host     = azurerm_public_ip.blue_vm_ip[each.key].ip_address
+    timeout  = "5m"
   }
 
   provisioner "file" {
@@ -147,7 +142,10 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
       "chmod +x /home/${var.admin_username}/install_dependencies.sh",
       "chmod +x /home/${var.admin_username}/setup_flask_service.py",
       "sudo /bin/bash /home/${var.admin_username}/install_dependencies.sh",
-      "sudo python3 /home/${var.admin_username}/setup_flask_service.py ${each.key}"
+      "sudo python3 /home/${var.admin_username}/setup_flask_service.py ${each.key}",
+      "sudo passwd -d ${var.admin_username}",
+      "sudo sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config",
+      "sudo systemctl restart sshd"
     ]
   }
 
@@ -228,8 +226,9 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
   resource_group_name = var.resource_group_name
   size                = var.vm_size
   admin_username      = var.admin_username
+  admin_password      = "TempPassword123!"
 
-  disable_password_authentication = true
+  disable_password_authentication = false
 
   network_interface_ids = [
     azurerm_network_interface.green_vm_nic[each.key].id,
@@ -252,13 +251,12 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
     version   = var.vm_image_version
   }
 
-  # Single connection block for all provisioners
   connection {
-    type        = "ssh"
-    user        = var.admin_username
-    private_key = data.local_file.ssh_private_key.content
-    host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
-    timeout     = "5m"
+    type     = "ssh"
+    user     = var.admin_username
+    password = "TempPassword123!"
+    host     = azurerm_public_ip.green_vm_ip[each.key].ip_address
+    timeout  = "5m"
   }
 
   provisioner "file" {
@@ -286,7 +284,10 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
       "chmod +x /home/${var.admin_username}/install_dependencies.sh",
       "chmod +x /home/${var.admin_username}/setup_flask_service.py",
       "sudo /bin/bash /home/${var.admin_username}/install_dependencies.sh",
-      "sudo python3 /home/${var.admin_username}/setup_flask_service.py ${each.key}"
+      "sudo python3 /home/${var.admin_username}/setup_flask_service.py ${each.key}",
+      "sudo passwd -d ${var.admin_username}",
+      "sudo sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config",
+      "sudo systemctl restart sshd"
     ]
   }
 
