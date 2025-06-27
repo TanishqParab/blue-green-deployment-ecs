@@ -2,15 +2,6 @@
 # Azure VM Resources - Blue/Green Deployment
 ############################################
 
-# Generate random password for temporary use
-resource "random_password" "admin_password" {
-  length  = 16
-  special = true
-  upper   = true
-  lower   = true
-  numeric = true
-}
-
 # SSH Key for VM access
 resource "azurerm_ssh_public_key" "main" {
   name                = var.ssh_key_name
@@ -93,7 +84,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
   resource_group_name = var.resource_group_name
   size                = var.vm_size
   admin_username      = var.admin_username
-  admin_password      = random_password.admin_password.result
+  admin_password      = var.admin_password
 
   disable_password_authentication = false
 
@@ -121,7 +112,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
   connection {
     type     = "ssh"
     user     = var.admin_username
-    password = random_password.admin_password.result
+    password = var.admin_password
     host     = azurerm_public_ip.blue_vm_ip[each.key].ip_address
     timeout  = "5m"
   }
@@ -235,7 +226,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
   resource_group_name = var.resource_group_name
   size                = var.vm_size
   admin_username      = var.admin_username
-  admin_password      = random_password.admin_password.result
+  admin_password      = var.admin_password
 
   disable_password_authentication = false
 
@@ -263,7 +254,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
   connection {
     type     = "ssh"
     user     = var.admin_username
-    password = random_password.admin_password.result
+    password = var.admin_password
     host     = azurerm_public_ip.green_vm_ip[each.key].ip_address
     timeout  = "5m"
   }
