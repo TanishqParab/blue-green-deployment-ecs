@@ -29,63 +29,7 @@ variable "admin_enabled" {
   default     = true
 }
 
-variable "georeplications" {
-  description = "List of geo-replication configurations"
-  type = list(object({
-    location                = string
-    zone_redundancy_enabled = optional(bool, false)
-    tags                    = optional(map(string), {})
-  }))
-  default = []
-}
 
-variable "network_rule_set_enabled" {
-  description = "Enable network rule set"
-  type        = bool
-  default     = false
-}
-
-variable "network_rule_default_action" {
-  description = "Default action for network rule set"
-  type        = string
-  default     = "Allow"
-}
-
-variable "network_rule_ip_rules" {
-  description = "List of IP rules for network rule set"
-  type = list(object({
-    action   = string
-    ip_range = string
-  }))
-  default = []
-}
-
-variable "network_rule_virtual_networks" {
-  description = "List of virtual network rules"
-  type = list(object({
-    action    = string
-    subnet_id = string
-  }))
-  default = []
-}
-
-variable "retention_policy_enabled" {
-  description = "Enable retention policy"
-  type        = bool
-  default     = false
-}
-
-variable "retention_policy_days" {
-  description = "Number of days for retention policy"
-  type        = number
-  default     = 30
-}
-
-variable "trust_policy_enabled" {
-  description = "Enable trust policy"
-  type        = bool
-  default     = false
-}
 
 variable "skip_docker_build" {
   description = "Skip Docker image build and push"
