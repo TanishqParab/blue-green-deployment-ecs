@@ -2,13 +2,6 @@
 # Azure VM Resources - Blue/Green Deployment
 ############################################
 
-# Create local SSH key file
-resource "local_file" "ssh_private_key" {
-  content         = var.ssh_private_key
-  filename        = "${path.module}/temp_ssh_key.pem"
-  file_permission = "0600"
-}
-
 # SSH Key for VM access
 resource "azurerm_ssh_public_key" "main" {
   name                = var.ssh_key_name
@@ -115,6 +108,44 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
     version   = var.vm_image_version
   }
 
+  # Single connection block for all provisioners
+  connection {
+    type        = "ssh"
+    user        = var.admin_username
+    private_key = var.ssh_private_key
+    host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
+    timeout     = "5m"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/install_dependencies.sh"
+    destination = "/home/${var.admin_username}/install_dependencies.sh"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/app_${replace(each.key, "app_", "")}.py"
+    destination = "/home/${var.admin_username}/app_${each.key}.py"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/setup_flask_service.py"
+    destination = "/home/${var.admin_username}/setup_flask_service.py"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sleep 30",
+      "sudo apt-get update",
+      "sudo apt-get install -y dos2unix",
+      "dos2unix /home/${var.admin_username}/install_dependencies.sh",
+      "dos2unix /home/${var.admin_username}/setup_flask_service.py",
+      "chmod +x /home/${var.admin_username}/install_dependencies.sh",
+      "chmod +x /home/${var.admin_username}/setup_flask_service.py",
+      "sudo /bin/bash /home/${var.admin_username}/install_dependencies.sh",
+      "sudo python3 /home/${var.admin_username}/setup_flask_service.py ${each.key}"
+    ]
+  }
+
   tags = merge(
     {
       Name        = each.value.blue_vm_name
@@ -126,51 +157,6 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
     },
     var.additional_tags
   )
-}
-
-# Blue VM Setup using null_resource
-resource "null_resource" "blue_vm_setup" {
-  for_each = var.application
-
-  depends_on = [azurerm_linux_virtual_machine.blue_vm, local_file.ssh_private_key]
-
-  connection {
-    type        = "ssh"
-    user        = var.admin_username
-    private_key = file(local_file.ssh_private_key.filename)
-    host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
-    timeout     = "10m"
-  }
-
-  provisioner "file" {
-    source      = "${path.module}/scripts/install_dependencies.sh"
-    destination = "/tmp/install_dependencies.sh"
-  }
-
-  provisioner "file" {
-    source      = "${path.module}/scripts/app_${replace(each.key, "app_", "")}.py"
-    destination = "/tmp/app_${each.key}.py"
-  }
-
-  provisioner "file" {
-    source      = "${path.module}/scripts/setup_flask_service.py"
-    destination = "/tmp/setup_flask_service.py"
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "sleep 60",
-      "sudo mv /tmp/* /home/${var.admin_username}/",
-      "sudo chown ${var.admin_username}:${var.admin_username} /home/${var.admin_username}/*",
-      "sudo apt-get update",
-      "sudo apt-get install -y dos2unix",
-      "dos2unix /home/${var.admin_username}/*.sh /home/${var.admin_username}/*.py",
-      "chmod +x /home/${var.admin_username}/install_dependencies.sh",
-      "chmod +x /home/${var.admin_username}/setup_flask_service.py",
-      "sudo /bin/bash /home/${var.admin_username}/install_dependencies.sh",
-      "sudo python3 /home/${var.admin_username}/setup_flask_service.py ${each.key}"
-    ]
-  }
 }
 
 ############################################
@@ -261,6 +247,44 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
     version   = var.vm_image_version
   }
 
+  # Single connection block for all provisioners
+  connection {
+    type        = "ssh"
+    user        = var.admin_username
+    private_key = var.ssh_private_key
+    host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
+    timeout     = "5m"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/install_dependencies.sh"
+    destination = "/home/${var.admin_username}/install_dependencies.sh"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/app_${replace(each.key, "app_", "")}.py"
+    destination = "/home/${var.admin_username}/app_${each.key}.py"
+  }
+
+  provisioner "file" {
+    source      = "${path.module}/scripts/setup_flask_service.py"
+    destination = "/home/${var.admin_username}/setup_flask_service.py"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sleep 30",
+      "sudo apt-get update",
+      "sudo apt-get install -y dos2unix",
+      "dos2unix /home/${var.admin_username}/install_dependencies.sh",
+      "dos2unix /home/${var.admin_username}/setup_flask_service.py",
+      "chmod +x /home/${var.admin_username}/install_dependencies.sh",
+      "chmod +x /home/${var.admin_username}/setup_flask_service.py",
+      "sudo /bin/bash /home/${var.admin_username}/install_dependencies.sh",
+      "sudo python3 /home/${var.admin_username}/setup_flask_service.py ${each.key}"
+    ]
+  }
+
   tags = merge(
     {
       Name        = each.value.green_vm_name
@@ -272,49 +296,4 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
     },
     var.additional_tags
   )
-}
-
-# Green VM Setup using null_resource
-resource "null_resource" "green_vm_setup" {
-  for_each = var.application
-
-  depends_on = [azurerm_linux_virtual_machine.green_vm, local_file.ssh_private_key]
-
-  connection {
-    type        = "ssh"
-    user        = var.admin_username
-    private_key = file(local_file.ssh_private_key.filename)
-    host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
-    timeout     = "10m"
-  }
-
-  provisioner "file" {
-    source      = "${path.module}/scripts/install_dependencies.sh"
-    destination = "/tmp/install_dependencies.sh"
-  }
-
-  provisioner "file" {
-    source      = "${path.module}/scripts/app_${replace(each.key, "app_", "")}.py"
-    destination = "/tmp/app_${each.key}.py"
-  }
-
-  provisioner "file" {
-    source      = "${path.module}/scripts/setup_flask_service.py"
-    destination = "/tmp/setup_flask_service.py"
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "sleep 60",
-      "sudo mv /tmp/* /home/${var.admin_username}/",
-      "sudo chown ${var.admin_username}:${var.admin_username} /home/${var.admin_username}/*",
-      "sudo apt-get update",
-      "sudo apt-get install -y dos2unix",
-      "dos2unix /home/${var.admin_username}/*.sh /home/${var.admin_username}/*.py",
-      "chmod +x /home/${var.admin_username}/install_dependencies.sh",
-      "chmod +x /home/${var.admin_username}/setup_flask_service.py",
-      "sudo /bin/bash /home/${var.admin_username}/install_dependencies.sh",
-      "sudo python3 /home/${var.admin_username}/setup_flask_service.py ${each.key}"
-    ]
-  }
 }
