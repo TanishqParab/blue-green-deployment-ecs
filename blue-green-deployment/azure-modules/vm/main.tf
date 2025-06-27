@@ -112,7 +112,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
   connection {
     type        = "ssh"
     user        = var.admin_username
-    private_key = var.ssh_private_key
+    private_key = file("${path.root}/azure-vm-key.pem")
     host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
     timeout     = "5m"
   }
@@ -251,7 +251,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
   connection {
     type        = "ssh"
     user        = var.admin_username
-    private_key = var.ssh_private_key
+    private_key = file("${path.root}/azure-vm-key.pem")
     host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
     timeout     = "5m"
   }
