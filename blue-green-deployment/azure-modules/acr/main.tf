@@ -10,53 +10,6 @@ resource "azurerm_container_registry" "main" {
   sku                 = var.sku
   admin_enabled       = var.admin_enabled
 
-  dynamic "georeplications" {
-    for_each = var.georeplications
-    content {
-      location                = georeplications.value.location
-      zone_redundancy_enabled = georeplications.value.zone_redundancy_enabled
-      tags                    = georeplications.value.tags
-    }
-  }
-
-  dynamic "network_rule_set" {
-    for_each = var.network_rule_set_enabled ? [1] : []
-    content {
-      default_action = var.network_rule_default_action
-
-      dynamic "ip_rule" {
-        for_each = var.network_rule_ip_rules
-        content {
-          action   = ip_rule.value.action
-          ip_range = ip_rule.value.ip_range
-        }
-      }
-
-      dynamic "virtual_network" {
-        for_each = var.network_rule_virtual_networks
-        content {
-          action    = virtual_network.value.action
-          subnet_id = virtual_network.value.subnet_id
-        }
-      }
-    }
-  }
-
-  dynamic "retention_policy" {
-    for_each = var.retention_policy_enabled ? [1] : []
-    content {
-      days    = var.retention_policy_days
-      enabled = var.retention_policy_enabled
-    }
-  }
-
-  dynamic "trust_policy" {
-    for_each = var.trust_policy_enabled ? [1] : []
-    content {
-      enabled = var.trust_policy_enabled
-    }
-  }
-
   tags = merge(
     {
       Name        = var.registry_name
