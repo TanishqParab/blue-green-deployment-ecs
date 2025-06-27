@@ -735,6 +735,7 @@ variable "azure_vm" {
   type = object({
     vm_size             = string
     admin_username      = string
+    admin_password      = string
     ssh_key_name        = string
     ssh_public_key      = string
     
@@ -750,6 +751,7 @@ variable "azure_vm" {
   default = {
     vm_size         = "Standard_B2s"
     admin_username  = "azureuser"
+    admin_password  = ""
     ssh_key_name    = "azure-ssh-key"
     ssh_public_key  = ""
     vm_application  = {}
@@ -757,6 +759,7 @@ variable "azure_vm" {
     terraform_managed = "true"
   }
 }
+
 
 ############################################
 # Azure ACR Configuration Variables
