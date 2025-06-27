@@ -2,6 +2,11 @@
 # Azure VM Resources - Blue/Green Deployment
 ############################################
 
+# Read SSH private key from file
+data "local_file" "ssh_private_key" {
+  filename = "${path.root}/azure-vm-key.pem"
+}
+
 # SSH Key for VM access
 resource "azurerm_ssh_public_key" "main" {
   name                = var.ssh_key_name
@@ -112,7 +117,7 @@ resource "azurerm_linux_virtual_machine" "blue_vm" {
   connection {
     type        = "ssh"
     user        = var.admin_username
-    private_key = file("azure-vm-key.pem")
+    private_key = data.local_file.ssh_private_key.content
     host        = azurerm_public_ip.blue_vm_ip[each.key].ip_address
     timeout     = "5m"
   }
@@ -251,7 +256,7 @@ resource "azurerm_linux_virtual_machine" "green_vm" {
   connection {
     type        = "ssh"
     user        = var.admin_username
-    private_key = file("azure-vm-key.pem")
+    private_key = data.local_file.ssh_private_key.content
     host        = azurerm_public_ip.green_vm_ip[each.key].ip_address
     timeout     = "5m"
   }
