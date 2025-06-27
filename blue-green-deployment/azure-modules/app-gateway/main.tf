@@ -104,26 +104,13 @@ resource "azurerm_application_gateway" "main" {
     protocol                       = var.listener_protocol
   }
 
-  # Individual routing rules for each application
-  dynamic "request_routing_rule" {
-    for_each = var.application_paths
-    content {
-      name                       = "${request_routing_rule.key}-routing-rule"
-      rule_type                  = "PathBasedRouting"
-      http_listener_name         = "http-listener"
-      url_path_map_name          = "main-path-map"
-      priority                   = request_routing_rule.value.priority
-    }
-  }
-
-  # Default routing rule for unmatched paths (static welcome message)
+  # Single routing rule with path-based routing
   request_routing_rule {
-    name                       = "default-static-routing-rule"
-    rule_type                  = "Basic"
+    name                       = "main-routing-rule"
+    rule_type                  = "PathBasedRouting"
     http_listener_name         = "http-listener"
-    backend_address_pool_name  = "default-static-pool"
-    backend_http_settings_name = "default-static-http-settings"
-    priority                   = 1000
+    url_path_map_name          = "main-path-map"
+    priority                   = 100
   }
 
   # Single URL Path Map with all application rules
