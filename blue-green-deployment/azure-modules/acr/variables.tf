@@ -105,3 +105,9 @@ variable "terraform_managed" {
   type        = string
   default     = "true"
 }
+
+variable "app_gateway_name" {
+  description = "Application Gateway name for automatic registration"
+  type        = string
+  default     = ""
+}
