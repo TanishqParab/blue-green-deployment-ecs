@@ -255,3 +255,5 @@ resource "random_string" "static_dns_suffix" {
   special = false
   upper   = false
 }
+
+
