@@ -64,16 +64,20 @@ resource "null_resource" "auto_register_containers" {
         --name app_3-blue-pool \
         --set backendAddresses='[{"ipAddress":"'$APP3_IP'"}]'
       
+      # Get static welcome container IP from module output
+      STATIC_IP="${module.azure_aci.static_welcome_container_ip}"
+      echo "Static welcome IP: $STATIC_IP"
+      
       az network application-gateway address-pool update \
         --gateway-name ${var.azure_app_gateway.app_gateway_name} \
         --resource-group ${module.azure_vnet.resource_group_name} \
         --name default-static-pool \
-        --add backendAddresses ipAddress=$APP1_IP || \
+        --add backendAddresses ipAddress=$STATIC_IP || \
       az network application-gateway address-pool update \
         --gateway-name ${var.azure_app_gateway.app_gateway_name} \
         --resource-group ${module.azure_vnet.resource_group_name} \
         --name default-static-pool \
-        --set backendAddresses='[{"ipAddress":"'$APP1_IP'"}]'
+        --set backendAddresses='[{"ipAddress":"'$STATIC_IP'"}]'
       
       echo "✅ Registration complete!"
       
