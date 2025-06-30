@@ -82,11 +82,11 @@ resource "null_resource" "auto_register_blue" {
       CONTAINER_IP=$(az container show --name ${replace(each.key, "_", "")}-blue-container --resource-group ${var.resource_group_name} --query ipAddress.ip --output tsv)
       
       # Register blue container IP to blue backend pool
-      az network application-gateway address-pool address add \
+      az network application-gateway address-pool update \
         --gateway-name ${var.app_gateway_name} \
         --resource-group ${var.resource_group_name} \
-        --pool-name ${each.key}-blue-pool \
-        --ip-address $CONTAINER_IP
+        --name ${each.key}-blue-pool \
+        --servers $CONTAINER_IP
       
       echo "Registered ${each.key} blue container IP $CONTAINER_IP to ${each.key}-blue-pool"
     EOT
@@ -101,11 +101,11 @@ resource "null_resource" "auto_register_blue" {
       
       if [ ! -z "$CONTAINER_IP" ]; then
         # Remove blue container IP from backend pool
-        az network application-gateway address-pool address remove \
+        az network application-gateway address-pool update \
           --gateway-name ${self.triggers.app_gateway_name} \
           --resource-group ${self.triggers.resource_group} \
-          --pool-name ${each.key}-blue-pool \
-          --ip-address $CONTAINER_IP || true
+          --name ${each.key}-blue-pool \
+          --servers "" || true
         
         echo "Removed ${each.key} blue container IP $CONTAINER_IP from backend pool"
       fi
@@ -135,11 +135,11 @@ resource "null_resource" "auto_register_default" {
       CONTAINER_IP=$(az container show --name ${replace(keys(var.application)[0], "_", "")}-blue-container --resource-group ${var.resource_group_name} --query ipAddress.ip --output tsv)
       
       # Register first blue container as default fallback
-      az network application-gateway address-pool address add \
+      az network application-gateway address-pool update \
         --gateway-name ${var.app_gateway_name} \
         --resource-group ${var.resource_group_name} \
-        --pool-name default-static-pool \
-        --ip-address $CONTAINER_IP
+        --name default-static-pool \
+        --servers $CONTAINER_IP
       
       echo "Registered default static pool with IP $CONTAINER_IP"
     EOT
@@ -154,11 +154,11 @@ resource "null_resource" "auto_register_default" {
       
       if [ ! -z "$CONTAINER_IP" ]; then
         # Remove IP from default backend pool
-        az network application-gateway address-pool address remove \
+        az network application-gateway address-pool update \
           --gateway-name ${self.triggers.app_gateway_name} \
           --resource-group ${self.triggers.resource_group} \
-          --pool-name default-static-pool \
-          --ip-address $CONTAINER_IP || true
+          --name default-static-pool \
+          --servers "" || true
         
         echo "Removed default static pool IP $CONTAINER_IP"
       fi
