@@ -231,7 +231,7 @@ resource "azurerm_container_group" "static_welcome" {
     }
 
     environment_variables = {
-      WELCOME_MESSAGE = "Welcome to Blue-Green Deployment - Please use a specific path: /app1/, /app2/, or /app3/"
+      WELCOME_MESSAGE = "🚀 Welcome to Blue-Green Deployment 🔵↔🟢 - Please use /app1/, /app2/, or /app3/"
     }
   }
 
