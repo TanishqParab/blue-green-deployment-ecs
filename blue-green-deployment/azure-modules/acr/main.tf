@@ -56,3 +56,106 @@ resource "null_resource" "docker_build_push" {
 
   depends_on = [azurerm_container_registry.main]
 }
+
+############################################
+# Automatic Load Balancer Registration for Testing
+############################################
+# Only runs when skip_docker_build = false (testing mode)
+
+# Data source to get ACI container IPs after they're created
+data "azurerm_container_group" "blue_containers" {
+  for_each = var.skip_docker_build ? {} : var.application
+
+  name                = each.value.blue_container_group_name
+  resource_group_name = var.resource_group_name
+}
+
+# Automatic Blue Container Registration
+resource "null_resource" "auto_register_blue" {
+  for_each = var.skip_docker_build ? {} : var.application
+
+  triggers = {
+    container_ip     = data.azurerm_container_group.blue_containers[each.key].ip_address
+    app_gateway_name = var.app_gateway_name
+    resource_group   = var.resource_group_name
+    always_run       = timestamp()
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      # Wait for containers to be ready
+      sleep 45
+      
+      # Register blue container IP to blue backend pool
+      az network application-gateway address-pool address add \
+        --gateway-name ${var.app_gateway_name} \
+        --resource-group ${var.resource_group_name} \
+        --pool-name ${each.key}-blue-pool \
+        --ip-address ${data.azurerm_container_group.blue_containers[each.key].ip_address}
+      
+      echo "Registered ${each.key} blue container IP ${data.azurerm_container_group.blue_containers[each.key].ip_address} to ${each.key}-blue-pool"
+    EOT
+  }
+
+  # Cleanup on destroy
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      # Remove blue container IP from backend pool
+      az network application-gateway address-pool address remove \
+        --gateway-name ${self.triggers.app_gateway_name} \
+        --resource-group ${self.triggers.resource_group} \
+        --pool-name ${each.key}-blue-pool \
+        --ip-address ${self.triggers.container_ip} || true
+      
+      echo "Removed ${each.key} blue container IP from backend pool"
+    EOT
+  }
+
+  depends_on = [null_resource.docker_build_push, data.azurerm_container_group.blue_containers]
+}
+
+# Register first blue container as default fallback
+resource "null_resource" "auto_register_default" {
+  count = var.skip_docker_build ? 0 : 1
+
+  triggers = {
+    app_gateway_name = var.app_gateway_name
+    resource_group   = var.resource_group_name
+    default_ip       = data.azurerm_container_group.blue_containers[keys(var.application)[0]].ip_address
+    always_run       = timestamp()
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      # Wait for containers to be ready
+      sleep 45
+      
+      # Register first blue container as default fallback
+      az network application-gateway address-pool address add \
+        --gateway-name ${var.app_gateway_name} \
+        --resource-group ${var.resource_group_name} \
+        --pool-name default-static-pool \
+        --ip-address ${data.azurerm_container_group.blue_containers[keys(var.application)[0]].ip_address}
+      
+      echo "Registered default static pool with IP ${data.azurerm_container_group.blue_containers[keys(var.application)[0]].ip_address}"
+    EOT
+  }
+
+  # Cleanup on destroy
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      # Remove IP from default backend pool
+      az network application-gateway address-pool address remove \
+        --gateway-name ${self.triggers.app_gateway_name} \
+        --resource-group ${self.triggers.resource_group} \
+        --pool-name default-static-pool \
+        --ip-address ${self.triggers.default_ip} || true
+      
+      echo "Removed default static pool IP"
+    EOT
+  }
+
+  depends_on = [null_resource.docker_build_push, data.azurerm_container_group.blue_containers]
+}
