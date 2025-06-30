@@ -66,7 +66,7 @@ resource "null_resource" "docker_build_push" {
 data "azurerm_container_group" "blue_containers" {
   for_each = var.skip_docker_build ? {} : var.application
 
-  name                = each.value.blue_container_group_name
+  name                = "${each.key}-blue-container"
   resource_group_name = var.resource_group_name
 }
 
