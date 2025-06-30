@@ -221,7 +221,7 @@ resource "azurerm_container_group" "static_welcome" {
 
   container {
     name   = "static-welcome"
-    image  = "nginx:alpine"
+    image  = "mcr.microsoft.com/azuredocs/aci-helloworld:latest"
     cpu    = "0.25"
     memory = "0.5"
 
@@ -231,14 +231,8 @@ resource "azurerm_container_group" "static_welcome" {
     }
 
     environment_variables = {
-      NGINX_HTML = "<html><body><h1>Welcome to Blue-Green Deployment</h1><p>Please use a specific path: /app1/, /app2/, or /app3/</p></body></html>"
+      WELCOME_MESSAGE = "Welcome to Blue-Green Deployment - Please use a specific path: /app1/, /app2/, or /app3/"
     }
-
-    commands = [
-      "/bin/sh",
-      "-c",
-      "echo '<html><body><h1>Welcome to Blue-Green Deployment</h1><p>Please use a specific path: /app1/, /app2/, or /app3/</p></body></html>' > /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
-    ]
   }
 
   tags = merge(
