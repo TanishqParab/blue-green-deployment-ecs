@@ -202,3 +202,62 @@ resource "random_string" "dns_suffix" {
   special = false
   upper   = false
 }
+
+############################################
+# Static Welcome Container
+############################################
+
+# Static welcome container for default path (matches ALB fixed response)
+resource "azurerm_container_group" "static_welcome" {
+  count = var.skip_docker_build ? 0 : 1
+
+  name                = "static-welcome-container"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  ip_address_type     = var.ip_address_type
+  dns_name_label      = "static-welcome-${random_string.static_dns_suffix[0].result}"
+  os_type             = var.os_type
+  restart_policy      = var.restart_policy
+
+  container {
+    name   = "static-welcome"
+    image  = "nginx:alpine"
+    cpu    = "0.25"
+    memory = "0.5"
+
+    ports {
+      port     = 80
+      protocol = var.container_protocol
+    }
+
+    environment_variables = {
+      NGINX_HTML = "<html><body><h1>Welcome to Blue-Green Deployment</h1><p>Please use a specific path: /app1/, /app2/, or /app3/</p></body></html>"
+    }
+
+    commands = [
+      "/bin/sh",
+      "-c",
+      "echo '<html><body><h1>Welcome to Blue-Green Deployment</h1><p>Please use a specific path: /app1/, /app2/, or /app3/</p></body></html>' > /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+    ]
+  }
+
+  tags = merge(
+    {
+      Name           = "static-welcome-container"
+      Environment    = var.environment
+      Module         = var.module_name
+      Terraform      = var.terraform_managed
+      DeploymentType = "static"
+    },
+    var.additional_tags
+  )
+}
+
+# Random string for static container DNS
+resource "random_string" "static_dns_suffix" {
+  count = var.skip_docker_build ? 0 : 1
+
+  length  = 8
+  special = false
+  upper   = false
+}
