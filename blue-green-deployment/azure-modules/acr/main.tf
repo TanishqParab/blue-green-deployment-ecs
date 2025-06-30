@@ -69,7 +69,7 @@ resource "null_resource" "auto_register_blue" {
   triggers = {
     app_gateway_name = var.app_gateway_name
     resource_group   = var.resource_group_name
-    container_name   = "${each.key}-blue-container"
+    container_name   = "${replace(each.key, "_", "")}-blue-container"
     always_run       = timestamp()
   }
 
@@ -79,7 +79,7 @@ resource "null_resource" "auto_register_blue" {
       sleep 60
       
       # Get container IP dynamically
-      CONTAINER_IP=$(az container show --name ${each.key}-blue-container --resource-group ${var.resource_group_name} --query ipAddress.ip --output tsv)
+      CONTAINER_IP=$(az container show --name ${replace(each.key, "_", "")}-blue-container --resource-group ${var.resource_group_name} --query ipAddress.ip --output tsv)
       
       # Register blue container IP to blue backend pool
       az network application-gateway address-pool address add \
@@ -122,7 +122,7 @@ resource "null_resource" "auto_register_default" {
   triggers = {
     app_gateway_name = var.app_gateway_name
     resource_group   = var.resource_group_name
-    first_app        = keys(var.application)[0]
+    first_app        = replace(keys(var.application)[0], "_", "")
     always_run       = timestamp()
   }
 
@@ -132,7 +132,7 @@ resource "null_resource" "auto_register_default" {
       sleep 60
       
       # Get first container IP dynamically
-      CONTAINER_IP=$(az container show --name ${keys(var.application)[0]}-blue-container --resource-group ${var.resource_group_name} --query ipAddress.ip --output tsv)
+      CONTAINER_IP=$(az container show --name ${replace(keys(var.application)[0], "_", "")}-blue-container --resource-group ${var.resource_group_name} --query ipAddress.ip --output tsv)
       
       # Register first blue container as default fallback
       az network application-gateway address-pool address add \
