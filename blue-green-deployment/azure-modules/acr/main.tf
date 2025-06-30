@@ -47,10 +47,10 @@ resource "null_resource" "docker_build_push" {
       docker build -t ${each.value.image_name} ${var.docker_build_args} --build-arg APP_NAME=${replace(each.key, "app_", "")} .
       
       # Tag the image with app-specific latest tag
-      docker tag ${each.value.image_name}:${each.value.image_tag} ${azurerm_container_registry.main.login_server}:${each.key}-latest
+      docker tag ${each.value.image_name}:${each.value.image_tag} ${azurerm_container_registry.main.login_server}/${each.value.image_name}:${each.key}-latest
       
       # Push the app-specific latest tag
-      docker push ${azurerm_container_registry.main.login_server}:${each.key}-latest
+      docker push ${azurerm_container_registry.main.login_server}/${each.value.image_name}:${each.key}-latest
     EOT
   }
 
