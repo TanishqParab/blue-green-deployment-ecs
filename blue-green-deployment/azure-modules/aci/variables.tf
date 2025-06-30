@@ -69,7 +69,7 @@ variable "health_check_path" {
 variable "health_check_scheme" {
   description = "Health check scheme"
   type        = string
-  default     = "Http"
+  default     = "http"
 }
 
 variable "health_check_initial_delay" {
