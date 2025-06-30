@@ -45,3 +45,8 @@ output "green_container_group_fqdns" {
     app_name => cg.fqdn
   }
 }
+
+output "static_welcome_container_ip" {
+  description = "IP address of the static welcome container"
+  value       = var.skip_docker_build ? null : azurerm_container_group.static_welcome[0].ip_address
+}
