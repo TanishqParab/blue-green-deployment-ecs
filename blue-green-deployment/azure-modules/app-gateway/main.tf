@@ -77,7 +77,6 @@ resource "azurerm_application_gateway" "main" {
     content {
       name                  = "${backend_http_settings.key}-http-settings"
       cookie_based_affinity = var.cookie_based_affinity
-      path                  = var.backend_path
       port                  = backend_http_settings.value.backend_port
       protocol              = var.backend_protocol
       request_timeout       = var.request_timeout
@@ -89,7 +88,6 @@ resource "azurerm_application_gateway" "main" {
   backend_http_settings {
     name                  = "default-static-http-settings"
     cookie_based_affinity = var.cookie_based_affinity
-    path                  = var.backend_path
     port                  = 80
     protocol              = var.backend_protocol
     request_timeout       = var.request_timeout
