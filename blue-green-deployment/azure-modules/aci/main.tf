@@ -50,30 +50,36 @@ resource "azurerm_container_group" "blue" {
       }
     }
 
-    liveness_probe {
-      http_get {
-        path   = var.health_check_path
-        port   = each.value.container_port
-        scheme = var.health_check_scheme
+    dynamic "liveness_probe" {
+      for_each = var.skip_docker_build ? [] : [1]
+      content {
+        http_get {
+          path   = var.health_check_path
+          port   = each.value.container_port
+          scheme = var.health_check_scheme
+        }
+        initial_delay_seconds = var.health_check_initial_delay
+        period_seconds        = var.health_check_period
+        failure_threshold     = var.health_check_failure_threshold
+        success_threshold     = var.health_check_success_threshold
+        timeout_seconds       = var.health_check_timeout
       }
-      initial_delay_seconds = var.health_check_initial_delay
-      period_seconds        = var.health_check_period
-      failure_threshold     = var.health_check_failure_threshold
-      success_threshold     = var.health_check_success_threshold
-      timeout_seconds       = var.health_check_timeout
     }
 
-    readiness_probe {
-      http_get {
-        path   = var.health_check_path
-        port   = each.value.container_port
-        scheme = var.health_check_scheme
+    dynamic "readiness_probe" {
+      for_each = var.skip_docker_build ? [] : [1]
+      content {
+        http_get {
+          path   = var.health_check_path
+          port   = each.value.container_port
+          scheme = var.health_check_scheme
+        }
+        initial_delay_seconds = var.health_check_initial_delay
+        period_seconds        = var.health_check_period
+        failure_threshold     = var.health_check_failure_threshold
+        success_threshold     = var.health_check_success_threshold
+        timeout_seconds       = var.health_check_timeout
       }
-      initial_delay_seconds = var.health_check_initial_delay
-      period_seconds        = var.health_check_period
-      failure_threshold     = var.health_check_failure_threshold
-      success_threshold     = var.health_check_success_threshold
-      timeout_seconds       = var.health_check_timeout
     }
   }
 
@@ -144,30 +150,36 @@ resource "azurerm_container_group" "green" {
       }
     }
 
-    liveness_probe {
-      http_get {
-        path   = var.health_check_path
-        port   = each.value.container_port
-        scheme = var.health_check_scheme
+    dynamic "liveness_probe" {
+      for_each = var.skip_docker_build ? [] : [1]
+      content {
+        http_get {
+          path   = var.health_check_path
+          port   = each.value.container_port
+          scheme = var.health_check_scheme
+        }
+        initial_delay_seconds = var.health_check_initial_delay
+        period_seconds        = var.health_check_period
+        failure_threshold     = var.health_check_failure_threshold
+        success_threshold     = var.health_check_success_threshold
+        timeout_seconds       = var.health_check_timeout
       }
-      initial_delay_seconds = var.health_check_initial_delay
-      period_seconds        = var.health_check_period
-      failure_threshold     = var.health_check_failure_threshold
-      success_threshold     = var.health_check_success_threshold
-      timeout_seconds       = var.health_check_timeout
     }
 
-    readiness_probe {
-      http_get {
-        path   = var.health_check_path
-        port   = each.value.container_port
-        scheme = var.health_check_scheme
+    dynamic "readiness_probe" {
+      for_each = var.skip_docker_build ? [] : [1]
+      content {
+        http_get {
+          path   = var.health_check_path
+          port   = each.value.container_port
+          scheme = var.health_check_scheme
+        }
+        initial_delay_seconds = var.health_check_initial_delay
+        period_seconds        = var.health_check_period
+        failure_threshold     = var.health_check_failure_threshold
+        success_threshold     = var.health_check_success_threshold
+        timeout_seconds       = var.health_check_timeout
       }
-      initial_delay_seconds = var.health_check_initial_delay
-      period_seconds        = var.health_check_period
-      failure_threshold     = var.health_check_failure_threshold
-      success_threshold     = var.health_check_success_threshold
-      timeout_seconds       = var.health_check_timeout
     }
   }
 
