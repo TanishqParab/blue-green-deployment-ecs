@@ -409,6 +409,7 @@ module "azure_aci" {
   memory          = var.azure_aci.memory
 
   application = var.azure_aci.application
+  skip_docker_build = var.azure_acr.skip_docker_build
 
   health_check_path              = var.azure_aci.health_check_path
   health_check_initial_delay     = var.azure_aci.health_check_initial_delay
