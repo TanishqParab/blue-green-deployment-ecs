@@ -149,33 +149,15 @@ module "asg" {
   security_group_id = module.security_group.security_group_id
   key_name          = var.ec2.key_name
 
-  # Target group ARNs for load balancer integration
+  # Update this line to use the first target group from each map
   alb_target_group_arns = [
     module.alb.blue_target_group_arns["app_1"],
     module.alb.green_target_group_arns["app_1"]
   ]
 
-  # Scaling Configuration
-  name             = var.asg.name
+  desired_capacity = var.asg.desired_capacity
   min_size         = var.asg.min_size
   max_size         = var.asg.max_size
-  desired_capacity = var.asg.desired_capacity
-
-  # Launch Configuration
-  launch_template_name_prefix = var.asg.launch_template_name_prefix
-  associate_public_ip_address = var.asg.associate_public_ip_address
-
-  # Health Check Settings
-  health_check_type         = var.asg.health_check_type
-  health_check_grace_period = var.asg.health_check_grace_period
-
-  # Deployment Settings
-  min_healthy_percentage = var.asg.min_healthy_percentage
-  instance_warmup        = var.asg.instance_warmup
-
-  # Module Settings
-  module_name       = var.asg.module_name
-  terraform_managed = var.asg.terraform_managed
 }
 
 # Option 2: AWS ECS + ECR Modules (Container-based deployment)
@@ -207,6 +189,7 @@ module "ecr" {
 module "ecs" {
   source = "./modules/ecs"
 
+  # Basic ECS settings
   ecs_cluster_name    = var.ecs.cluster_name
   task_family         = var.ecs.task_family
   task_role_arn       = var.ecs.task_role_arn
@@ -221,23 +204,78 @@ module "ecs" {
   green_service_name  = var.ecs.green_service_name
   image_tag           = var.ecs.image_tag
 
+  # Multiple applications configuration
   application = var.ecs.application
 
+  # Network settings
   public_subnet_ids = module.vpc.public_subnet_ids
   security_group_id = module.security_group.security_group_id
   network_mode      = var.ecs.network_mode
   assign_public_ip  = var.ecs.assign_public_ip
 
+  # Target group settings
   blue_target_group_arn   = module.alb.blue_target_group_arns["app_1"]
   green_target_group_arn  = module.alb.green_target_group_arns["app_1"]
   blue_target_group_arns  = module.alb.blue_target_group_arns
   green_target_group_arns = module.alb.green_target_group_arns
 
-  environment       = var.aws.tags.Environment
-  module_name       = var.ecs.module_name
-  terraform_managed = var.ecs.terraform_managed
-  additional_tags   = merge(var.aws.tags, var.additional_tags)
 
+  # Task definition settings
+  ecs_task_definition      = var.ecs.task_definition
+  requires_compatibilities = var.ecs.requires_compatibilities
+  launch_type              = var.ecs.launch_type
+  green_desired_count      = var.ecs.green_desired_count
+
+  # Container configuration
+  enable_container_insights = var.ecs.enable_container_insights
+  enable_container_logs     = var.ecs.enable_container_logs
+  log_group_name            = var.ecs.log_group_name
+  log_retention_days        = var.ecs.log_retention_days
+  container_environment     = var.ecs.container_environment
+  container_secrets         = var.ecs.container_secrets
+  container_protocol        = var.ecs.container_protocol
+  blue_log_stream_prefix    = var.ecs.blue_log_stream_prefix
+  green_log_stream_prefix   = var.ecs.green_log_stream_prefix
+  container_essential       = var.ecs.container_essential
+  log_driver                = var.ecs.log_driver
+
+  # IAM configuration
+  logs_policy_name          = var.ecs.logs_policy_name
+  iam_policy_version        = var.ecs.iam_policy_version
+  iam_service_principal     = var.ecs.iam_service_principal
+  task_execution_policy_arn = var.ecs.task_execution_policy_arn
+
+  # Naming conventions
+  green_container_name_suffix = var.ecs.green_container_name_suffix
+  green_task_family_suffix    = var.ecs.green_task_family_suffix
+  blue_task_name_suffix       = var.ecs.blue_task_name_suffix
+  green_task_name_suffix      = var.ecs.green_task_name_suffix
+  log_resource_suffix         = var.ecs.log_resource_suffix
+
+  # EFS configurations
+  efs_root_directory_default     = var.ecs.efs_root_directory_default
+  efs_transit_encryption_default = var.ecs.efs_transit_encryption_default
+
+  # Deployment configuration
+  deployment_maximum_percent         = var.ecs.deployment_maximum_percent
+  deployment_minimum_healthy_percent = var.ecs.deployment_minimum_healthy_percent
+  health_check_grace_period_seconds  = var.ecs.health_check_grace_period_seconds
+  enable_fargate_capacity_providers  = var.ecs.enable_fargate_capacity_providers
+  capacity_provider_strategy         = var.ecs.capacity_provider_strategy
+  execute_command_logging            = var.ecs.execute_command_logging
+  task_volumes                       = var.ecs.task_volumes
+
+  # Tag settings
+  environment            = var.aws.tags.Environment
+  module_name            = var.ecs.module_name
+  terraform_managed      = var.ecs.terraform_managed
+  blue_deployment_type   = var.ecs.blue_deployment_type
+  green_deployment_type  = var.ecs.green_deployment_type
+  blue_service_tag_name  = var.ecs.blue_service_tag_name
+  green_service_tag_name = var.ecs.green_service_tag_name
+  additional_tags        = merge(var.aws.tags, var.additional_tags)
+
+  # AWS region
   aws_region = var.aws.region
 
   depends_on = [module.alb, module.ecr]
