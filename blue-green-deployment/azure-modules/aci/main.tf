@@ -209,7 +209,7 @@ resource "random_string" "dns_suffix" {
 
 # Static welcome container for default path (matches ALB fixed response)
 resource "azurerm_container_group" "static_welcome" {
-  count = var.skip_docker_build ? 0 : 1
+  count = 1
 
   name                = "static-welcome-container"
   location            = var.location
@@ -249,7 +249,7 @@ resource "azurerm_container_group" "static_welcome" {
 
 # Random string for static container DNS
 resource "random_string" "static_dns_suffix" {
-  count = var.skip_docker_build ? 0 : 1
+  count = 1
 
   length  = 8
   special = false
