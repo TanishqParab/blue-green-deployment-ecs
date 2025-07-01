@@ -20,7 +20,7 @@ resource "azurerm_container_group" "blue" {
 
   container {
     name   = each.value.container_name
-    image  = "${var.container_registry_url}/${each.value.image_name}:${each.key}-latest"
+    image  = var.skip_docker_build ? "mcr.microsoft.com/azuredocs/aci-helloworld:latest" : "${var.container_registry_url}/${each.value.image_name}:${each.key}-latest"
     cpu    = var.cpu
     memory = var.memory
 
@@ -114,7 +114,7 @@ resource "azurerm_container_group" "green" {
 
   container {
     name   = "${each.value.container_name}-green"
-    image  = "${var.container_registry_url}/${each.value.image_name}:${each.key}-latest"
+    image  = var.skip_docker_build ? "mcr.microsoft.com/azuredocs/aci-helloworld:latest" : "${var.container_registry_url}/${each.value.image_name}:${each.key}-latest"
     cpu    = var.cpu
     memory = var.memory
 
