@@ -335,7 +335,7 @@ module "azure_app_gateway" {
 }
 
 # Azure Compute Options - Choose ONE: VM OR ACI+ACR
-/*
+
 # Option 1: Azure VM Module (VM-based deployment)
 # Commented out to use container-based deployment
 
@@ -362,9 +362,9 @@ module "azure_vm" {
   additional_tags   = merge(var.azure.tags, var.additional_tags)
 }
 
-*/
 
 
+/*
 # Option 2: Azure ACI + ACR Modules (Container-based deployment)
 module "azure_acr" {
   source = "./azure-modules/acr"
@@ -424,3 +424,4 @@ module "azure_aci" {
   depends_on = [module.azure_acr]
 }
 
+*/
