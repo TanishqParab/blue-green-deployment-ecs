@@ -1,3 +1,4 @@
+/*
 # Automatic Load Balancer Registration for Testing
 # Only runs when skip_docker_build = false (testing mode)
 # Runs after all modules are complete to avoid dependency issues
@@ -145,3 +146,4 @@ resource "null_resource" "auto_register_containers" {
   ]
 }
 
+*/
