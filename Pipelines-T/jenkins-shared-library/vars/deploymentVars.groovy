@@ -24,9 +24,8 @@ def call(String environment = 'default') {
         emailRecipient: 'tanishqparab2001@gmail.com',
         
         // Repository Configuration
-        repoUrl: 'https://github.com/EncoraDigital/COE-AWS-BlueGreenDeployment-POC',
-        repoBranch: 'Multi-App',
-        repoCredentialsId: 'github-repo-enc',
+        repoUrl: 'https://github.com/TanishqParab/blue-green-deployment-ecs',
+        repoBranch: 'main',
         
         // Working Directory - updated to match actual Jenkins workspace
         tfWorkingDirEC2: '/var/lib/jenkins/workspace/EC2-Unified-Pipeline/blue-green-deployment',
