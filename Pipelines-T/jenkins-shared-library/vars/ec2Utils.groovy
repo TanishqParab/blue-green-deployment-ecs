@@ -111,13 +111,13 @@ def detectChanges(Map config) {
     def infraChanges = false
     
     fileList.each { file ->
-        if (file.endsWith("app.py")) {
+        if (file.contains("app.py")) {
             appChanges.add("default")
-        } else if (file.endsWith("app_1.py")) {
+        } else if (file.contains("app_1.py")) {
             appChanges.add("app1")
-        } else if (file.endsWith("app_2.py")) {
+        } else if (file.contains("app_2.py")) {
             appChanges.add("app2")
-        } else if (file.endsWith("app_3.py")) {
+        } else if (file.contains("app_3.py")) {
             appChanges.add("app3")
         } else {
             // Any other file is considered an infra change
@@ -147,7 +147,6 @@ def detectChanges(Map config) {
         env.EXECUTION_TYPE = 'FULL_DEPLOY'
     }
 }
-
 
 
 def fetchResources(Map config) {
