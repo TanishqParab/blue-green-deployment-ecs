@@ -125,7 +125,7 @@ module "alb" {
 }
 
 # AWS Compute Options - Choose ONE: EC2 OR ECS+ECR
-/*
+
 # Option 1: AWS EC2 Module (VM-based deployment)
 module "ec2" {
   source = "./modules/aws/ec2"
@@ -161,8 +161,7 @@ module "asg" {
   max_size         = var.asg.max_size
 }
 
-*/
-
+/*
 # Option 2: AWS ECS + ECR Modules (Container-based deployment)
 # Uncomment these when using containers instead of VMs
 
@@ -284,7 +283,7 @@ module "ecs" {
   depends_on = [module.alb, module.ecr]
 }
 
-
+*/
 
 /*
 ############################################
