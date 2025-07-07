@@ -292,7 +292,7 @@ module "ecs" {
 # AZURE IMPLEMENTATION
 ############################################
 # Uncomment ONE of the following sections when deploying to Azure
-
+/*
 # Option 1: Azure ACI Implementation (Container-based deployment)
 module "azure_aci_implementation" {
   source = "./modules/azure/implementations/aci"
@@ -311,7 +311,8 @@ module "azure_aci_implementation" {
   azure_aci         = var.azure_aci
 }
 
-/*
+*/
+
 # Option 2: Azure VM Implementation (VM-based deployment)
 module "azure_vm_implementation" {
   source = "./modules/azure/implementations/vm"
@@ -326,5 +327,5 @@ module "azure_vm_implementation" {
   azure_vm            = var.azure_vm
 }
 
-*/
+
 
