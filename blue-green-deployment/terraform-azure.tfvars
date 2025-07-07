@@ -103,18 +103,18 @@ azure_app_gateway = {
   # Application-specific backend pools
   application_target_groups = {
     app_1 = {
-      blue_backend_pool_name  = "app1-blue-pool"
-      green_backend_pool_name = "app1-green-pool"
+      blue_backend_pool_name  = "app_1-blue-pool"
+      green_backend_pool_name = "app_1-green-pool"
       backend_port            = 80
     },
     app_2 = {
-      blue_backend_pool_name  = "app2-blue-pool"
-      green_backend_pool_name = "app2-green-pool"
+      blue_backend_pool_name  = "app_2-blue-pool"
+      green_backend_pool_name = "app_2-green-pool"
       backend_port            = 80
     },
     app_3 = {
-      blue_backend_pool_name  = "app3-blue-pool"
-      green_backend_pool_name = "app3-green-pool"
+      blue_backend_pool_name  = "app_3-blue-pool"
+      green_backend_pool_name = "app_3-green-pool"
       backend_port            = 80
     }
   }
@@ -145,7 +145,6 @@ azure_app_gateway = {
   module_name       = "azure-app-gateway"
   terraform_managed = "true"
 }
-
 ############################################
 # Azure VM Configuration
 ############################################
