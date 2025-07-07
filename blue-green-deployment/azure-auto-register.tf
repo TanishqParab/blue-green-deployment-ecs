@@ -2,7 +2,7 @@
 # Only runs when skip_docker_build = false (testing mode)
 # Runs after all modules are complete to avoid dependency issues
 
-/*
+
 # Automatic Blue Container Registration
 resource "null_resource" "auto_register_containers" {
   count = var.azure_acr.skip_docker_build ? 0 : 1
@@ -145,5 +145,5 @@ resource "null_resource" "auto_register_containers" {
     module.azure_app_gateway
   ]
 }
-*/
+
 
