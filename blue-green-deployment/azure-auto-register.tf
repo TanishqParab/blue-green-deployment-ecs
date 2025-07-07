@@ -30,38 +30,23 @@ resource "null_resource" "auto_register_containers" {
       # Register containers to backend pools
       echo "🔗 Registering containers to backend pools..."
       
-      # Try different CLI syntax for your version
+      # Use correct backend pool names with underscores
       az network application-gateway address-pool update \
         --gateway-name ${var.azure_app_gateway.app_gateway_name} \
         --resource-group ${module.azure_aci_implementation.resource_group_name} \
-        --name app1-blue-pool \
-        --add backendAddresses ipAddress=$APP1_IP || \
-      az network application-gateway address-pool update \
-        --gateway-name ${var.azure_app_gateway.app_gateway_name} \
-        --resource-group ${module.azure_aci_implementation.resource_group_name} \
-        --name app1-blue-pool \
+        --name app_1-blue-pool \
         --set backendAddresses='[{"ipAddress":"'$APP1_IP'"}]'
       
       az network application-gateway address-pool update \
         --gateway-name ${var.azure_app_gateway.app_gateway_name} \
         --resource-group ${module.azure_aci_implementation.resource_group_name} \
-        --name app2-blue-pool \
-        --add backendAddresses ipAddress=$APP2_IP || \
-      az network application-gateway address-pool update \
-        --gateway-name ${var.azure_app_gateway.app_gateway_name} \
-        --resource-group ${module.azure_aci_implementation.resource_group_name} \
-        --name app2-blue-pool \
+        --name app_2-blue-pool \
         --set backendAddresses='[{"ipAddress":"'$APP2_IP'"}]'
       
       az network application-gateway address-pool update \
         --gateway-name ${var.azure_app_gateway.app_gateway_name} \
         --resource-group ${module.azure_aci_implementation.resource_group_name} \
-        --name app3-blue-pool \
-        --add backendAddresses ipAddress=$APP3_IP || \
-      az network application-gateway address-pool update \
-        --gateway-name ${var.azure_app_gateway.app_gateway_name} \
-        --resource-group ${module.azure_aci_implementation.resource_group_name} \
-        --name app3-blue-pool \
+        --name app_3-blue-pool \
         --set backendAddresses='[{"ipAddress":"'$APP3_IP'"}]'
       
       # Get static welcome container IP from module output
@@ -69,11 +54,6 @@ resource "null_resource" "auto_register_containers" {
       if [ ! -z "$STATIC_IP" ]; then
         echo "Static welcome IP: $STATIC_IP"
         
-        az network application-gateway address-pool update \
-          --gateway-name ${var.azure_app_gateway.app_gateway_name} \
-          --resource-group ${module.azure_aci_implementation.resource_group_name} \
-          --name default-static-pool \
-          --add backendAddresses ipAddress=$STATIC_IP || \
         az network application-gateway address-pool update \
           --gateway-name ${var.azure_app_gateway.app_gateway_name} \
           --resource-group ${module.azure_aci_implementation.resource_group_name} \
@@ -110,30 +90,30 @@ resource "null_resource" "auto_register_containers" {
         az network application-gateway address-pool update \
           --gateway-name ${self.triggers.app_gateway_name} \
           --resource-group ${self.triggers.resource_group} \
-          --name app1-blue-pool \
-          --servers "" || true
+          --name app_1-blue-pool \
+          --set backendAddresses='[]' || true
         
         az network application-gateway address-pool update \
           --gateway-name ${self.triggers.app_gateway_name} \
           --resource-group ${self.triggers.resource_group} \
           --name default-static-pool \
-          --servers "" || true
+          --set backendAddresses='[]' || true
       fi
       
       if [ ! -z "$APP2_IP" ]; then
         az network application-gateway address-pool update \
           --gateway-name ${self.triggers.app_gateway_name} \
           --resource-group ${self.triggers.resource_group} \
-          --name app2-blue-pool \
-          --servers "" || true
+          --name app_2-blue-pool \
+          --set backendAddresses='[]' || true
       fi
       
       if [ ! -z "$APP3_IP" ]; then
         az network application-gateway address-pool update \
           --gateway-name ${self.triggers.app_gateway_name} \
           --resource-group ${self.triggers.resource_group} \
-          --name app3-blue-pool \
-          --servers "" || true
+          --name app_3-blue-pool \
+          --set backendAddresses='[]' || true
       fi
       
       echo "✅ Cleanup complete!"
