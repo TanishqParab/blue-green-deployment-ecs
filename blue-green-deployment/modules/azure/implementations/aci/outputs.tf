@@ -15,12 +15,7 @@ output "public_subnet_ids" {
 
 output "app_gateway_public_ip" {
   description = "Public IP of Application Gateway"
-  value       = module.azure_app_gateway.public_ip_address
-}
-
-output "app_gateway_fqdn" {
-  description = "FQDN of Application Gateway"
-  value       = module.azure_app_gateway.fqdn
+  value       = module.azure_app_gateway.app_gateway_public_ip
 }
 
 output "acr_login_server" {
@@ -30,20 +25,20 @@ output "acr_login_server" {
 
 output "blue_container_ips" {
   description = "IP addresses of blue containers"
-  value       = module.azure_aci.blue_container_ips
+  value       = module.azure_aci.blue_container_group_ips
 }
 
 output "green_container_ips" {
   description = "IP addresses of green containers"
-  value       = module.azure_aci.green_container_ips
+  value       = module.azure_aci.green_container_group_ips
 }
 
 output "blue_container_fqdns" {
   description = "FQDNs of blue containers"
-  value       = module.azure_aci.blue_container_fqdns
+  value       = module.azure_aci.blue_container_group_fqdns
 }
 
 output "green_container_fqdns" {
   description = "FQDNs of green containers"
-  value       = module.azure_aci.green_container_fqdns
+  value       = module.azure_aci.green_container_group_fqdns
 }
