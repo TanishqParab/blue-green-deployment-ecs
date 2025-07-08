@@ -98,26 +98,13 @@ pipeline {
                     def config = azureDeploymentVars()
                     config.implementation = 'azure-vm'
                     config.cloudProvider = 'azure'
+                    config.tfWorkingDir = './blue-green-deployment'
                     config.appName = env.APP_NAME
                     config.tfVarsFile = 'terraform-azure.tfvars'
                     
                     azureBasePipelineImpl.initialize(config)
                     azureBasePipelineImpl.checkout(config)
                     
-                    // Update main.tf to use VM implementation
-                    sh """
-                        # Comment out ACI implementation
-                        sed -i 's/^module "azure_aci_implementation"/# module "azure_aci_implementation"/' main.tf
-                        sed -i '/^module "azure_aci_implementation"/,/^}/ s/^/# /' main.tf
-                        
-                        # Uncomment VM implementation
-                        sed -i 's/^# module "azure_vm_implementation"/module "azure_vm_implementation"/' main.tf
-                        sed -i '/^# module "azure_vm_implementation"/,/^# }/ s/^# //' main.tf
-                        
-                        # Comment out Azure provider if needed
-                        sed -i 's/^# provider "azurerm"/provider "azurerm"/' main.tf
-                        sed -i 's/^provider "aws"/# provider "aws"/' main.tf
-                    """
                     
                     if (env.EXECUTION_TYPE == 'FULL_DEPLOY' || env.EXECUTION_TYPE == 'MANUAL_APPLY') {
                         azureTerraformInit(config)
@@ -168,6 +155,7 @@ pipeline {
                     def config = azureDeploymentVars()
                     config.implementation = 'azure-vm'
                     config.cloudProvider = 'azure'
+                    config.tfWorkingDir = './blue-green-deployment'
                     config.appName = env.APP_NAME
                     config.tfVarsFile = 'terraform-azure.tfvars'
                     
@@ -196,6 +184,7 @@ pipeline {
                     def config = azureDeploymentVars()
                     config.implementation = 'azure-vm'
                     config.cloudProvider = 'azure'
+                    config.tfWorkingDir = './blue-green-deployment'
                     config.appName = env.APP_NAME
                     config.tfVarsFile = 'terraform-azure.tfvars'
                     
