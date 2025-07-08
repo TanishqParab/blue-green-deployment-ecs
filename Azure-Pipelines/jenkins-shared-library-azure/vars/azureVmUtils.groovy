@@ -280,8 +280,7 @@ def deployToTargetVM(Map config) {
     echo "🎯 Deploying to ${targetEnv} environment (${targetVmTag})..."
 
     // Always deploy to the target VM regardless of current routing
-    echo "🚀 Deploying updated application to ${targetEnv} VM (target environment)..."rget VM regardless of current routing
-    echo "🚀 Deploying updated application to Blue VM (target environment)..."
+    echo "🚀 Deploying updated application to ${targetEnv} VM (target environment)..."
 
     // Get Target VM IP
     def targetVmIp = sh(
