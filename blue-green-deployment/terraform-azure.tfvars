@@ -196,7 +196,7 @@ azure_acr = {
   registry_name     = "bluegreenacrregistry"
   sku               = "Basic"
   admin_enabled     = true
-  skip_docker_build = false # Set to true to disable Docker build (for Jenkins pipeline), false for manual testing
+  skip_docker_build = true # Set to true to disable Docker build (for Jenkins pipeline), false for manual testing
 
   # Multiple applications configuration
   application = {
