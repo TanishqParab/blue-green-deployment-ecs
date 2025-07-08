@@ -145,21 +145,23 @@ def updateApplication(Map config) {
     }
 }
 
-def deployToTargetAzureVM(Map config) {
+def deployToBlueAzureVM(Map config) {
     if (config.implementation == 'azure-vm') {
         def deployConfig = [
             appGatewayName: config.appGatewayName ?: 'blue-green-appgw',                
+            bluePoolName: config.bluePoolName ?: 'app_1-blue-pool', 
+            blueVmTag: config.blueVmTag ?: 'app1-blue-vm',
             appName: config.appName ?: "",
             tfWorkingDir: config.tfWorkingDir,
             vmPasswordId: config.vmPasswordId ?: 'azure-vm-password'
         ]
-        azureVmUtils.deployToTargetVM(deployConfig)
+        azureVmUtils.deployToBlueVM(deployConfig)
     }
 }
 
-def deployToBlueAzureVM(Map config) {
+def deployToTargetAzureVM(Map config) {
     // Alias for backward compatibility
-    deployToTargetAzureVM(config)
+    deployToBlueAzureVM(config)
 }
 
 def testEnvironment(Map config) {
