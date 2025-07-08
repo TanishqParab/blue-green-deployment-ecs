@@ -268,43 +268,20 @@ def deployToBlueVM(Map config) {
     def targetEnv, targetVmTag, targetVmIp
     
     if (blueIsActive && !greenIsActive) {
-        // Blue is active, deploy to Green - but check SSH first
-        echo "🔵 Blue is currently active, checking Green VM SSH access..."
-        def greenVmIp = sh(
-            script: """az vm show -d -g ${resourceGroup} -n ${appName}-green-vm --query publicIps -o tsv""",
-            returnStdout: true
-        ).trim()
-        
-        // Test SSH connectivity to Green VM
-        def sshWorks = false
-        try {
-            withCredentials([usernamePassword(credentialsId: config.vmPasswordId ?: 'azure-vm-password', usernameVariable: 'VM_USER', passwordVariable: 'VM_PASS')]) {
-                sh "timeout 10 sshpass -p '\$VM_PASS' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \$VM_USER@${greenVmIp} 'echo SSH_OK' || exit 1"
-                sshWorks = true
-            }
-        } catch (Exception e) {
-            echo "⚠️ SSH to Green VM failed: ${e.message}"
-        }
-        
-        if (sshWorks) {
-            targetEnv = "GREEN"
-            targetVmTag = "${appName}-green-vm"
-            echo "✅ Green VM SSH accessible, deploying to Green environment"
-        } else {
-            targetEnv = "BLUE"
-            targetVmTag = "${appName}-blue-vm"
-            echo "⚠️ Green VM SSH not accessible, falling back to Blue environment"
-        }
+        // Blue is active, deploy to Green
+        targetEnv = "GREEN"
+        targetVmTag = "${appName}-green-vm"
+        echo "🔵 Blue is currently active, deploying to Green environment"
     } else if (greenIsActive && !blueIsActive) {
-        // Green is active, deploy to Blue (Blue should have working SSH)
+        // Green is active, deploy to Blue  
         targetEnv = "BLUE"
         targetVmTag = "${appName}-blue-vm"
-        echo "🟢 Green is currently active, deploying to Blue environment (SSH accessible)"
+        echo "🟢 Green is currently active, deploying to Blue environment"
     } else {
         // Default: deploy to Blue (first deployment or both active)
         targetEnv = "BLUE"
         targetVmTag = "${appName}-blue-vm"
-        echo "🔄 Defaulting to Blue environment deployment (SSH accessible)"
+        echo "🔄 Defaulting to Blue environment deployment"
     }
     
     echo "🎯 Deploying to ${targetEnv} environment (${targetVmTag})..."
