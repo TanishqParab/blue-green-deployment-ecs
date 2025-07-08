@@ -252,12 +252,8 @@ def deployToBlueVM(Map config) {
         returnStdout: true
     ).trim()
 
-    if (currentPoolConfig != '[]' && !currentPoolConfig.contains('"ipAddress": null')) {
-        echo "⚠️ Green backend pool is currently active. Skipping deployment to Blue."
-        return
-    }
-
-    echo "✅ Blue backend pool is currently active. Proceeding with deployment..."
+    // Always deploy to the target VM regardless of current routing
+    echo "🚀 Deploying updated application to Blue VM (target environment)..."
 
     // Get Blue VM IP
     def blueVmIp = sh(
@@ -266,7 +262,7 @@ def deployToBlueVM(Map config) {
     ).trim()
 
     if (!blueVmIp || blueVmIp == 'None') error "❌ No running Blue VM found!"
-    echo "✅ Deploying to Blue VM: ${blueVmIp}"
+    echo "✅ Deploying updated app to Blue VM: ${blueVmIp}"
 
     // Determine app filename and versioning
     def appBase = appName.replace('app', '')
@@ -274,22 +270,28 @@ def deployToBlueVM(Map config) {
     def appFileVer = "app_${appBase}_v${timestamp}.py"
     def appSymlink = "app_${appBase}.py"
     def appPath = config.appPath ?: "${config.tfWorkingDir ?: env.WORKSPACE + '/blue-green-deployment'}/modules/azure/vm/scripts"
-    def appFileSource = "${appPath}/${config.appFile ?: appSymlink}"
+    def appFileSource = "${appPath}/app_${appBase}.py"  // Use the updated app file
+    
+    echo "📁 Using app file: ${appFileSource}"
 
     // Use password authentication for SSH connections
     withCredentials([usernamePassword(credentialsId: config.vmPasswordId ?: 'azure-vm-password', usernameVariable: 'VM_USER', passwordVariable: 'VM_PASS')]) {
         sh """
             # Upload new version and switch symlink using sshpass
+            echo "📤 Uploading updated app file: ${appFileSource}"
             sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appFileSource} \$VM_USER@${blueVmIp}:/home/\$VM_USER/${appFileVer}
             sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no \$VM_USER@${blueVmIp} '
                 ln -sf /home/\$VM_USER/${appFileVer} /home/\$VM_USER/${appSymlink}
+                echo "✅ Updated symlink to new version"
             '
 
-            # Setup script
+            # Setup script and restart service
             sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appPath}/setup_flask_service.py \$VM_USER@${blueVmIp}:/home/\$VM_USER/
             sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no \$VM_USER@${blueVmIp} '
                 chmod +x /home/\$VM_USER/setup_flask_service.py &&
-                sudo python3 /home/\$VM_USER/setup_flask_service.py ${appName} switch
+                sudo python3 /home/\$VM_USER/setup_flask_service.py ${appName} switch &&
+                echo "🔄 Restarting Flask service to load new code" &&
+                sudo systemctl restart flask-app-${appName} || sudo systemctl restart flask-app-app_${appBase}
             '
         """
     }
