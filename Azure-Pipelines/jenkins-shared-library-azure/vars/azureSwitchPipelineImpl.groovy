@@ -145,17 +145,15 @@ def updateApplication(Map config) {
     }
 }
 
-def deployToBlueAzureVM(Map config) {
+def deployToTargetAzureVM(Map config) {
     if (config.implementation == 'azure-vm') {
         def deployConfig = [
             appGatewayName: config.appGatewayName ?: 'blue-green-appgw',                
-            bluePoolName: config.bluePoolName ?: 'app_1-blue-pool', 
-            blueVmTag: config.blueVmTag ?: 'app1-blue-vm',
             appName: config.appName ?: "",
             tfWorkingDir: config.tfWorkingDir,
-            sshKeyId: config.sshKeyId
+            vmPasswordId: config.vmPasswordId ?: 'azure-vm-password'
         ]
-        azureVmUtils.deployToBlueVM(deployConfig)
+        azureVmUtils.deployToTargetVM(deployConfig)
     }
 }
 
@@ -312,13 +310,13 @@ def getStages(Map config) {
         }
     }
     
-    stages << stage('Deploy to Blue Azure VM') {
+    stages << stage('Deploy to Target Azure VM') {
         when {
             expression { config.implementation == 'azure-vm' }
         }
         steps {
             script {
-                deployToBlueAzureVM(config)
+                deployToTargetAzureVM(config)
             }
         }
     }
