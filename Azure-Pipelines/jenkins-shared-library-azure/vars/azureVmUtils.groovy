@@ -230,20 +230,27 @@ def updateApplication(Map config) {
     echo "✅ VMs successfully registered to correct backend pools!"
 }
 
-def deployToBlueVM(Map config) {
+def deployToTargetVM(Map config) {
     def appName = config.appName ?: ""
     def appGatewayName = getAppGatewayName(config)
     def bluePoolName = "app_${appName.replace('app', '')}-blue-pool"
     def greenPoolName = "app_${appName.replace('app', '')}-green-pool"
-    def blueVmTag = "${appName}-blue-vm"
-    def pathPattern = "/${appName}"
 
-    echo "🔍 App: ${appName}, App Gateway: ${appGatewayName}, Blue Pool: ${bluePoolName}, Blue Tag: ${blueVmTag}"
+    echo "🔍 App: ${appName}, App Gateway: ${appGatewayName}"
 
     def resourceGroup = getResourceGroupName(config)
 
-    // Check current backend pool routing
-    def currentPoolConfig = sh(
+    // Determine current active environment and target environment
+    def bluePoolConfig = sh(
+        script: """az network application-gateway address-pool show \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${bluePoolName} \\
+            --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+        returnStdout: true
+    ).trim()
+    
+    def greenPoolConfig = sh(
         script: """az network application-gateway address-pool show \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
@@ -251,18 +258,39 @@ def deployToBlueVM(Map config) {
             --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
         returnStdout: true
     ).trim()
+    
+    // Determine target environment (opposite of current active)
+    def blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
+    def greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
+    
+    def targetEnv, targetVmTag
+    
+    if (blueIsActive && !greenIsActive) {
+        targetEnv = "GREEN"
+        targetVmTag = "${appName}-green-vm"
+    } else if (greenIsActive && !blueIsActive) {
+        targetEnv = "BLUE"
+        targetVmTag = "${appName}-blue-vm"
+    } else {
+        // Default: deploy to Green (assuming Blue is initially active)
+        targetEnv = "GREEN"
+        targetVmTag = "${appName}-green-vm"
+    }
+    
+    echo "🎯 Deploying to ${targetEnv} environment (${targetVmTag})..."
 
     // Always deploy to the target VM regardless of current routing
+    echo "🚀 Deploying updated application to ${targetEnv} VM (target environment)..."rget VM regardless of current routing
     echo "🚀 Deploying updated application to Blue VM (target environment)..."
 
-    // Get Blue VM IP
-    def blueVmIp = sh(
-        script: """az vm show -d -g ${resourceGroup} -n ${blueVmTag} --query publicIps -o tsv""",
+    // Get Target VM IP
+    def targetVmIp = sh(
+        script: """az vm show -d -g ${resourceGroup} -n ${targetVmTag} --query publicIps -o tsv""",
         returnStdout: true
     ).trim()
 
-    if (!blueVmIp || blueVmIp == 'None') error "❌ No running Blue VM found!"
-    echo "✅ Deploying updated app to Blue VM: ${blueVmIp}"
+    if (!targetVmIp || targetVmIp == 'None') error "❌ No running ${targetEnv} VM found!"
+    echo "✅ Deploying updated app to ${targetEnv} VM: ${targetVmIp}"
 
     // Determine app filename and versioning
     def appBase = appName.replace('app', '')
@@ -279,15 +307,15 @@ def deployToBlueVM(Map config) {
         sh """
             # Upload new version and switch symlink using sshpass
             echo "📤 Uploading updated app file: ${appFileSource}"
-            sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appFileSource} \$VM_USER@${blueVmIp}:/home/\$VM_USER/${appFileVer}
-            sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no \$VM_USER@${blueVmIp} '
+            sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appFileSource} \$VM_USER@${targetVmIp}:/home/\$VM_USER/${appFileVer}
+            sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no \$VM_USER@${targetVmIp} '
                 ln -sf /home/\$VM_USER/${appFileVer} /home/\$VM_USER/${appSymlink}
                 echo "✅ Updated symlink to new version"
             '
 
             # Setup script and restart service
-            sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appPath}/setup_flask_service.py \$VM_USER@${blueVmIp}:/home/\$VM_USER/
-            sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no \$VM_USER@${blueVmIp} '
+            sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appPath}/setup_flask_service.py \$VM_USER@${targetVmIp}:/home/\$VM_USER/
+            sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no \$VM_USER@${targetVmIp} '
                 chmod +x /home/\$VM_USER/setup_flask_service.py &&
                 sudo python3 /home/\$VM_USER/setup_flask_service.py ${appName} switch &&
                 echo "🔄 Restarting Flask service to load new code" &&
@@ -296,10 +324,11 @@ def deployToBlueVM(Map config) {
         """
     }
 
-    env.BLUE_VM_IP = blueVmIp
+    env.TARGET_VM_IP = targetVmIp
+    env.TARGET_ENV = targetEnv
 
     // Health Check
-    echo "🔍 Monitoring health of Blue VM..."
+    echo "🔍 Monitoring health of ${targetEnv} VM..."
     def healthStatus = ''
     def attempts = 0
     def maxAttempts = 30
@@ -308,7 +337,7 @@ def deployToBlueVM(Map config) {
         sleep(time: 10, unit: 'SECONDS')
         try {
             def response = sh(
-                script: "curl -s -o /dev/null -w '%{http_code}' http://${blueVmIp}/health || echo '000'",
+                script: "curl -s -o /dev/null -w '%{http_code}' http://${targetVmIp}/health || echo '000'",
                 returnStdout: true
             ).trim()
             
@@ -325,10 +354,10 @@ def deployToBlueVM(Map config) {
     }
 
     if (healthStatus != 'healthy') {
-        error "❌ Blue VM failed to become healthy after ${maxAttempts} attempts!"
+        error "❌ ${targetEnv} VM failed to become healthy after ${maxAttempts} attempts!"
     }
 
-    echo "✅ Blue VM is healthy!"
+    echo "✅ ${targetEnv} VM is healthy!"
 }
 
 def switchTraffic(Map config) {
@@ -343,11 +372,52 @@ def switchTraffic(Map config) {
     try {
         def resourceGroup = getResourceGroupName(config)
         
-        // Determine which environment to switch to (default to BLUE if not specified)
-        def targetEnv = config.targetEnv?.toUpperCase() ?: "BLUE"
-        def targetPoolName = (targetEnv == "BLUE") ? bluePoolName : greenPoolName
-        def sourcePoolName = (targetEnv == "BLUE") ? greenPoolName : bluePoolName
+        // Determine current active environment by checking backend pools
+        def bluePoolConfig = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${bluePoolName} \\
+                --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+            returnStdout: true
+        ).trim()
         
+        def greenPoolConfig = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${greenPoolName} \\
+                --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+            returnStdout: true
+        ).trim()
+        
+        // Determine which environment is currently active
+        def blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
+        def greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
+        
+        def currentEnv, targetEnv, targetPoolName, sourcePoolName
+        
+        if (blueIsActive && !greenIsActive) {
+            currentEnv = "BLUE"
+            targetEnv = "GREEN"
+            targetPoolName = greenPoolName
+            sourcePoolName = bluePoolName
+        } else if (greenIsActive && !blueIsActive) {
+            currentEnv = "GREEN"
+            targetEnv = "BLUE"
+            targetPoolName = bluePoolName
+            sourcePoolName = greenPoolName
+        } else {
+            // Default: assume Blue is active, switch to Green
+            echo "⚠️ Could not determine current environment clearly. Defaulting to switch from BLUE to GREEN."
+            currentEnv = "BLUE"
+            targetEnv = "GREEN"
+            targetPoolName = greenPoolName
+            sourcePoolName = bluePoolName
+        }
+        
+        echo "🔄 Current active environment: ${currentEnv}"
+        echo "🎯 Target environment: ${targetEnv}"
         echo "🔁 Switching traffic from ${sourcePoolName} to ${targetPoolName}..."
         
         // Get the target VM IP
@@ -393,7 +463,7 @@ def switchTraffic(Map config) {
             error "❌ Verification failed! Backend pool not pointing to ${targetEnv} VM."
         }
         
-        echo "✅✅✅ Traffic successfully routed to ${targetEnv} backend pool (${targetVmIp})!"
+        echo "✅✅✅ Traffic successfully switched from ${currentEnv} to ${targetEnv} (${targetVmIp})!"
     } catch (Exception e) {
         echo "⚠️ Error switching traffic: ${e.message}"
         throw e
