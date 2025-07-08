@@ -46,7 +46,21 @@ def call(config) {
     echo "Running Azure Terraform Plan: ${planCommand}"
     dir("${config.tfWorkingDir}") {
         sh "${planCommand}"
-        archiveArtifacts artifacts: 'tfplan', onlyIfSuccessful: true
+        
+        // Archive plan file and related artifacts
+        archiveArtifacts artifacts: 'tfplan', onlyIfSuccessful: true, fingerprint: true
+        
+        // Archive Terraform configuration files
+        archiveArtifacts artifacts: '**/*.tf,**/*.tfvars', 
+                       allowEmptyArchive: true, 
+                       fingerprint: true
+        
+        // Archive application scripts and configurations
+        archiveArtifacts artifacts: 'modules/**/*.py,modules/**/*.sh,modules/**/Dockerfile*', 
+                       allowEmptyArchive: true, 
+                       fingerprint: true
+        
+        echo "✅ Plan artifacts archived successfully"
     }
 }
 
