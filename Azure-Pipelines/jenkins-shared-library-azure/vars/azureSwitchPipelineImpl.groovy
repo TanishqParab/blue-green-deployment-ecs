@@ -157,6 +157,11 @@ def deployToTargetAzureVM(Map config) {
     }
 }
 
+def deployToBlueAzureVM(Map config) {
+    // Alias for backward compatibility
+    deployToTargetAzureVM(config)
+}
+
 def testEnvironment(Map config) {
     if (config.implementation == 'azure-aci' && env.DEPLOY_NEW_VERSION == 'true') {
         config.appGatewayName = config.appGatewayName ?: 'blue-green-appgw' 
