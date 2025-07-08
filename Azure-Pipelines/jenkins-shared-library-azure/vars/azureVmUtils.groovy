@@ -240,7 +240,7 @@ def deployToTargetVM(Map config) {
 
     def resourceGroup = getResourceGroupName(config)
 
-    // Determine current active environment and target environment
+    // Smart environment detection but ensure VM is accessible
     def bluePoolConfig = sh(
         script: """az network application-gateway address-pool show \\
             --gateway-name ${appGatewayName} \\
@@ -259,28 +259,18 @@ def deployToTargetVM(Map config) {
         returnStdout: true
     ).trim()
     
-    // Determine target environment (opposite of current active)
+    // Determine target environment but prefer Blue VM (which has working SSH)
     def blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
     def greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
     
     def targetEnv, targetVmTag
     
-    if (blueIsActive && !greenIsActive) {
-        targetEnv = "GREEN"
-        targetVmTag = "${appName}-green-vm"
-    } else if (greenIsActive && !blueIsActive) {
-        targetEnv = "BLUE"
-        targetVmTag = "${appName}-blue-vm"
-    } else {
-        // Default: deploy to Green (assuming Blue is initially active)
-        targetEnv = "GREEN"
-        targetVmTag = "${appName}-green-vm"
-    }
+    // Always prefer Blue VM for deployment (since SSH works)
+    targetEnv = "BLUE"
+    targetVmTag = "${appName}-blue-vm"
     
-    echo "🎯 Deploying to ${targetEnv} environment (${targetVmTag})..."
-
-    // Always deploy to the target VM regardless of current routing
-    echo "🚀 Deploying updated application to ${targetEnv} VM (target environment)..."
+    echo "🎯 Deploying to ${targetEnv} environment (${targetVmTag}) - using accessible VM..."
+    echo "🚀 Deploying updated application to ${targetEnv} VM..."
 
     // Get Target VM IP
     def targetVmIp = sh(
@@ -297,7 +287,7 @@ def deployToTargetVM(Map config) {
     def appFileVer = "app_${appBase}_v${timestamp}.py"
     def appSymlink = "app_${appBase}.py"
     def appPath = config.appPath ?: "${config.tfWorkingDir ?: env.WORKSPACE + '/blue-green-deployment'}/modules/azure/vm/scripts"
-    def appFileSource = "${appPath}/app_${appBase}.py"  // Use the updated app file
+    def appFileSource = "${appPath}/app_${appBase}.py"
     
     echo "📁 Using app file: ${appFileSource}"
 
