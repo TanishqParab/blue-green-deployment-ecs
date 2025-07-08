@@ -167,7 +167,7 @@ pipeline {
                         azureSwitchPipelineImpl.fetchResources(config)
                         azureSwitchPipelineImpl.manualApprovalBeforeSwitchTrafficAzureVM(config)
                         azureSwitchPipelineImpl.updateApplication(config)
-                        azureSwitchPipelineImpl.deployToTargetAzureVM(config)
+                        azureSwitchPipelineImpl.deployToBlueAzureVM(config)
                         azureSwitchPipelineImpl.switchTraffic(config)
                         azureSwitchPipelineImpl.postSwitchActions(config)
                     }
