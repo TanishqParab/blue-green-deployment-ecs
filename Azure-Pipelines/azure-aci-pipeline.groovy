@@ -118,28 +118,6 @@ pipeline {
                     azureBasePipelineImpl.initialize(config)
                     azureBasePipelineImpl.checkout(config)
                     
-                    // Update main.tf to use ACI implementation
-                    sh """
-                        # Comment out VM implementation
-                        sed -i 's/^module "azure_vm_implementation"/# module "azure_vm_implementation"/' main.tf
-                        sed -i '/^module "azure_vm_implementation"/,/^}/ s/^/# /' main.tf
-                        
-                        # Uncomment ACI implementation
-                        sed -i 's/^# module "azure_aci_implementation"/module "azure_aci_implementation"/' main.tf
-                        sed -i '/^# module "azure_aci_implementation"/,/^# }/ s/^# //' main.tf
-                        
-                        # Uncomment Azure provider and comment AWS
-                        sed -i 's/^# provider "azurerm"/provider "azurerm"/' main.tf
-                        sed -i 's/^provider "aws"/# provider "aws"/' main.tf
-                        
-                        # Comment out azure-auto-register.tf if skip_docker_build is true
-                        if grep -q 'skip_docker_build = true' terraform-azure.tfvars; then
-                            echo "Commenting out azure-auto-register.tf for production deployment"
-                            sed -i 's/^resource "null_resource"/# resource "null_resource"/' azure-auto-register.tf
-                            sed -i '/^resource "null_resource"/,/^}/ s/^/# /' azure-auto-register.tf
-                        fi
-                    """
-                    
                     if (env.EXECUTION_TYPE == 'FULL_DEPLOY' || env.EXECUTION_TYPE == 'MANUAL_APPLY') {
                         echo "DEBUG: Before terraform - Implementation: ${config.implementation}"
                         config.implementation = 'azure-aci'
@@ -180,6 +158,7 @@ pipeline {
                     def config = azureDeploymentVars()
                     config.implementation = 'azure-aci'
                     config.cloudProvider = 'azure'
+                    config.tfWorkingDir = './blue-green-deployment'
                     config.tfVarsFile = 'terraform-azure.tfvars'
                     
                     echo "🚀 Executing initial deployment for Azure ACI..."
@@ -208,6 +187,7 @@ pipeline {
                     def config = azureDeploymentVars()
                     config.implementation = 'azure-aci'
                     config.cloudProvider = 'azure'
+                    config.tfWorkingDir = './blue-green-deployment'
                     config.tfVarsFile = 'terraform-azure.tfvars'
                     
                     def changedFiles = []
@@ -297,6 +277,7 @@ pipeline {
                     def config = azureDeploymentVars()
                     config.implementation = 'azure-aci'
                     config.cloudProvider = 'azure'
+                    config.tfWorkingDir = './blue-green-deployment'
                     config.tfVarsFile = 'terraform-azure.tfvars'
                     
                     if (params.APP_NAME == 'all' || params.APP_NAME == null) {
