@@ -338,14 +338,38 @@ def updateApplication(Map config) {
         echo "Blue container image tag: ${blueImageTag}"
         echo "Green container image tag: ${greenImageTag}"
 
-        // Determine active environment based on app_*-latest tags
-        def appLatestTag = "${appName}-latest"
-        if (blueImageTag.contains(appLatestTag) && !greenImageTag.contains(appLatestTag)) {
+        // Determine active environment by checking backend pools (more reliable than image tags)
+        def appGatewayName = getAppGatewayName(config)
+        def bluePoolName = "${appName}-blue-pool"
+        def greenPoolName = "${appName}-green-pool"
+        
+        def bluePoolConfig = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${bluePoolName} \\
+                --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+            returnStdout: true
+        ).trim()
+        
+        def greenPoolConfig = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${greenPoolName} \\
+                --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+            returnStdout: true
+        ).trim()
+        
+        def blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
+        def greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
+        
+        if (blueIsActive && !greenIsActive) {
             env.ACTIVE_ENV = "BLUE"
-        } else if (greenImageTag.contains(appLatestTag) && !blueImageTag.contains(appLatestTag)) {
+        } else if (greenIsActive && !blueIsActive) {
             env.ACTIVE_ENV = "GREEN"
         } else {
-            echo "⚠️ Could not determine ACTIVE_ENV from image tags clearly. Defaulting ACTIVE_ENV to BLUE"
+            echo "⚠️ Could not determine ACTIVE_ENV from backend pools clearly. Defaulting ACTIVE_ENV to BLUE"
             env.ACTIVE_ENV = "BLUE"
         }
 
@@ -504,37 +528,98 @@ def testEnvironment(Map config) {
 }
 
 def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String greenPoolName, String appGatewayName, Map config = [:]) {
-    echo "🔄 Switching traffic to ${targetEnv}..."
+    echo "🔍 Smart traffic switching for Azure ACI..."
     
     def appName = config.APP_NAME ?: "app_1"
     def appSuffix = config.APP_SUFFIX ?: appName.replace("app_", "")
     def resourceGroup = getResourceGroupName(config)
-
-    def targetPoolName = (targetEnv == "GREEN") ? greenPoolName : bluePoolName
     
-    // Get the idle container IP
-    def idleContainerName = "${appName.replace('_', '')}-${targetEnv.toLowerCase()}-container"
-    def containerIp = sh(
-        script: """
-            az container show --name ${idleContainerName} --resource-group ${resourceGroup} --query ipAddress.ip --output tsv
-        """,
-        returnStdout: true
-    ).trim()
+    try {
+        // Determine current active environment by checking backend pools
+        def bluePoolConfig = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${bluePoolName} \\
+                --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+            returnStdout: true
+        ).trim()
+        
+        def greenPoolConfig = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${greenPoolName} \\
+                --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+            returnStdout: true
+        ).trim()
+        
+        // Determine which environment is currently active
+        def blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
+        def greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
+        
+        def currentEnv, actualTargetEnv, targetPoolName, sourcePoolName
+        
+        if (blueIsActive && !greenIsActive) {
+            currentEnv = "BLUE"
+            actualTargetEnv = "GREEN"
+            targetPoolName = greenPoolName
+            sourcePoolName = bluePoolName
+        } else if (greenIsActive && !blueIsActive) {
+            currentEnv = "GREEN"
+            actualTargetEnv = "BLUE"
+            targetPoolName = bluePoolName
+            sourcePoolName = greenPoolName
+        } else {
+            // Default: assume Blue is active, switch to Green
+            echo "⚠️ Could not determine current environment clearly. Defaulting to switch from BLUE to GREEN."
+            currentEnv = "BLUE"
+            actualTargetEnv = "GREEN"
+            targetPoolName = greenPoolName
+            sourcePoolName = bluePoolName
+        }
+        
+        echo "🔄 Current active environment: ${currentEnv}"
+        echo "🎯 Target environment: ${actualTargetEnv}"
+        echo "🔁 Switching traffic from ${sourcePoolName} to ${targetPoolName}..."
+        
+        // Get the target container IP
+        def targetContainerName = "${appName.replace('_', '')}-${actualTargetEnv.toLowerCase()}-container"
+        def containerIp = sh(
+            script: """
+                az container show --name ${targetContainerName} --resource-group ${resourceGroup} --query ipAddress.ip --output tsv
+            """,
+            returnStdout: true
+        ).trim()
 
-    if (!containerIp || containerIp == 'None') {
-        error "❌ Could not get container IP for ${idleContainerName}"
+        if (!containerIp || containerIp == 'None') {
+            error "❌ Could not get container IP for ${targetContainerName}"
+        }
+
+        // Update the target backend pool with the container IP
+        sh """
+            az network application-gateway address-pool update \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${targetPoolName} \\
+                --set backendAddresses='[{"ipAddress":"${containerIp}"}]'
+        """
+        
+        // Clear the source backend pool
+        sh """
+            az network application-gateway address-pool update \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${sourcePoolName} \\
+                --set backendAddresses='[]'
+        """
+        
+        echo "✅✅✅ Traffic successfully switched from ${currentEnv} to ${actualTargetEnv} (${containerIp})!"
+        
+    } catch (Exception e) {
+        echo "⚠️ Error switching traffic: ${e.message}"
+        throw e
     }
-
-    // Update backend pool with new container IP
-    sh """
-        az network application-gateway address-pool update \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${targetPoolName} \\
-            --set backendAddresses='[{"ipAddress":"${containerIp}"}]'
-    """
-    
-    echo "✅ Updated backend pool ${targetPoolName} to route to ${targetEnv} (${containerIp})"
 }
 
 def scaleDownOldEnvironment(Map config) {
@@ -584,13 +669,13 @@ def scaleDownOldEnvironment(Map config) {
 def getResourceGroupName(config) {
     try {
         def resourceGroup = sh(
-            script: "terraform output -raw resource_group_name 2>/dev/null || echo ''",
+            script: "cd blue-green-deployment && terraform output -raw resource_group_name 2>/dev/null || echo ''",
             returnStdout: true
         ).trim()
         
         if (!resourceGroup || resourceGroup == '') {
             resourceGroup = sh(
-                script: "grep 'resource_group_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
+                script: "cd blue-green-deployment && grep 'resource_group_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
                 returnStdout: true
             ).trim()
         }
@@ -606,13 +691,13 @@ def getResourceGroupName(config) {
 def getAppGatewayName(config) {
     try {
         def appGatewayName = sh(
-            script: "terraform output -raw app_gateway_name 2>/dev/null || echo ''",
+            script: "cd blue-green-deployment && terraform output -raw app_gateway_name 2>/dev/null || echo ''",
             returnStdout: true
         ).trim()
         
         if (!appGatewayName || appGatewayName == '') {
             appGatewayName = sh(
-                script: "grep 'app_gateway_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
+                script: "cd blue-green-deployment && grep 'app_gateway_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
                 returnStdout: true
             ).trim()
         }
@@ -628,13 +713,13 @@ def getAppGatewayName(config) {
 def getRegistryName(config) {
     try {
         def registryName = sh(
-            script: "terraform output -raw registry_name 2>/dev/null || echo ''",
+            script: "cd blue-green-deployment && terraform output -raw registry_name 2>/dev/null || echo ''",
             returnStdout: true
         ).trim()
         
         if (!registryName || registryName == '') {
             registryName = sh(
-                script: "grep 'registry_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
+                script: "cd blue-green-deployment && grep 'registry_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
                 returnStdout: true
             ).trim()
         }
