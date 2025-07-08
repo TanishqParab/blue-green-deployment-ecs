@@ -1,166 +1,57 @@
-/*
+# outputs.tf - Terraform outputs for Azure resources
 
-############################################
-# VPC Outputs
-############################################
-
-output "vpc_id" {
-  description = "The ID of the VPC"
-  value       = module.vpc.vpc_id
+# Azure VM Implementation Outputs
+output "resource_group_name" {
+  description = "Name of the Azure resource group"
+  value       = try(module.azure_vm_implementation[0].resource_group_name, module.azure_aci_implementation[0].resource_group_name, null)
 }
 
-output "public_subnet_ids" {
-  description = "List of public subnet IDs"
-  value       = module.vpc.public_subnet_ids
+output "app_gateway_name" {
+  description = "Name of the Azure Application Gateway"
+  value       = try(module.azure_vm_implementation[0].app_gateway_name, module.azure_aci_implementation[0].app_gateway_name, null)
 }
 
-output "private_subnet_ids" {
-  description = "List of private subnet IDs"
-  value       = module.vpc.private_subnet_ids
+output "app_gateway_public_ip" {
+  description = "Public IP of the Azure Application Gateway"
+  value       = try(module.azure_vm_implementation[0].app_gateway_public_ip, module.azure_aci_implementation[0].app_gateway_public_ip, null)
 }
 
-############################################
-# ALB Outputs
-############################################
-
-output "alb_id" {
-  description = "The ID of the ALB"
-  value       = module.alb.alb_id
+# Azure VM Specific Outputs
+output "blue_vm_ips" {
+  description = "Public IPs of blue VMs"
+  value       = try(module.azure_vm_implementation[0].blue_vm_ips, {})
 }
 
-output "alb_arn" {
-  description = "The ARN of the ALB"
-  value       = module.alb.alb_arn
+output "green_vm_ips" {
+  description = "Public IPs of green VMs"
+  value       = try(module.azure_vm_implementation[0].green_vm_ips, {})
 }
 
-output "alb_dns_name" {
-  description = "The DNS name of the ALB"
-  value       = module.alb.alb_dns_name
+# Azure ACI Specific Outputs
+output "blue_container_ips" {
+  description = "IPs of blue containers"
+  value       = try(module.azure_aci_implementation[0].blue_container_ips, {})
 }
 
-output "blue_target_group_arn" {
-  description = "The ARN of the blue target group"
-  value       = module.alb.blue_target_group_arn
+output "green_container_ips" {
+  description = "IPs of green containers"
+  value       = try(module.azure_aci_implementation[0].green_container_ips, {})
 }
 
-output "green_target_group_arn" {
-  description = "The ARN of the green target group"
-  value       = module.alb.green_target_group_arn
+output "registry_name" {
+  description = "Name of the Azure Container Registry"
+  value       = try(module.azure_aci_implementation[0].registry_name, null)
 }
 
-output "http_listener_arn" {
-  description = "The ARN of the HTTP listener"
-  value       = module.alb.http_listener_arn
+# Backend Pool Names
+output "backend_pools" {
+  description = "Application Gateway backend pool names"
+  value = {
+    app_1_blue  = "app_1-blue-pool"
+    app_1_green = "app_1-green-pool"
+    app_2_blue  = "app_2-blue-pool"
+    app_2_green = "app_2-green-pool"
+    app_3_blue  = "app_3-blue-pool"
+    app_3_green = "app_3-green-pool"
+  }
 }
-
-output "https_listener_arn" {
-  description = "The ARN of the HTTPS listener (if created)"
-  value       = module.alb.https_listener_arn
-}
-
-############################################
-# Security Group Outputs
-############################################
-
-output "security_group_id" {
-  description = "The ID of the security group"
-  value       = module.security_group.security_group_id
-}
-
-/*
-output "ecs_security_group_id" {
-  description = "ID of the ECS security group"
-  value       = aws_security_group.ecs_sg.id
-}
-*/
-
-/*
-############################################
-# ECR Outputs - Comment when using EC2
-############################################
-
-
-output "ecr_repository_url" {
-  description = "The URL of the ECR repository"
-  value       = module.ecr.repository_url
-}
-
-output "ecr_repository_name" {
-  description = "The name of the ECR repository"
-  value       = module.ecr.repository_name
-}
-
-output "image_url" {
-  description = "The URL of the Docker image"
-  value       = module.ecr.image_url
-}
-
-
-############################################
-# ECS Outputs - Comment when using EC2
-############################################
-
-
-output "ecs_cluster_id" {
-  description = "The ID of the ECS cluster"
-  value       = module.ecs.cluster_id
-}
-
-output "ecs_cluster_arn" {
-  description = "The ARN of the ECS cluster"
-  value       = module.ecs.cluster_arn
-}
-
-output "blue_service_id" {
-  description = "The ID of the blue ECS service"
-  value       = module.ecs.blue_service_id
-}
-
-output "green_service_id" {
-  description = "The ID of the green ECS service"
-  value       = module.ecs.green_service_id
-}
-
-output "blue_task_definition_arn" {
-  description = "The ARN of the blue task definition"
-  value       = module.ecs.blue_task_definition_arn
-}
-
-output "execution_role_arn" {
-  description = "The ARN of the ECS task execution role"
-  value       = module.ecs.execution_role_arn
-}
-
-
-
-
-/*
-############################################
-# EC2 Outputs - Uncomment when using EC2
-############################################
-
-output "blue_instance_ip" {
-  description = "The public IP of the blue EC2 instance"
-  value       = module.ec2.blue_instance_ip
-}
-
-output "green_instance_ip" {
-  description = "The public IP of the green EC2 instance"
-  value       = module.ec2.green_instance_ip
-}
-
-############################################
-# ASG Outputs - Uncomment when using EC2
-############################################
-
-output "asg_id" {
-  description = "The ID of the Auto Scaling Group"
-  value       = module.asg.asg_id
-}
-
-output "asg_name" {
-  description = "The name of the Auto Scaling Group"
-  value       = module.asg.asg_name
-}
-
-*/
