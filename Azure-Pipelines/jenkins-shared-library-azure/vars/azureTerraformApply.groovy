@@ -6,7 +6,26 @@ def call(config) {
 
         dir("${config.tfWorkingDir}") {
             sh "terraform apply -auto-approve tfplan"
-            archiveArtifacts artifacts: 'terraform.tfstate', fingerprint: true
+            
+            // Archive state file and related artifacts
+            archiveArtifacts artifacts: 'terraform.tfstate*', fingerprint: true
+            
+            // Archive Terraform configuration files
+            archiveArtifacts artifacts: '**/*.tf,**/*.tfvars', 
+                           allowEmptyArchive: true, 
+                           fingerprint: true
+            
+            // Archive application scripts and configurations
+            archiveArtifacts artifacts: 'modules/**/*.py,modules/**/*.sh,modules/**/Dockerfile*', 
+                           allowEmptyArchive: true, 
+                           fingerprint: true
+            
+            // Archive any generated files
+            archiveArtifacts artifacts: 'tfplan*,.terraform.lock.hcl', 
+                           allowEmptyArchive: true, 
+                           fingerprint: true
+            
+            echo "✅ Apply artifacts archived successfully"
         }
 
         if (config.implementation == 'azure-vm') {
