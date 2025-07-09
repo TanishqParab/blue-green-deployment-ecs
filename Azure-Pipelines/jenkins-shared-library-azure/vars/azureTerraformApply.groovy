@@ -105,15 +105,19 @@ def getVmPublicIp(String vmName, Map config) {
 def getResourceGroupName(config) {
     try {
         def resourceGroup = sh(
-            script: "terraform output -raw resource_group_name 2>/dev/null || echo ''",
+            script: "terraform output -raw resource_group_name 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo ''",
             returnStdout: true
         ).trim()
         
-        if (!resourceGroup || resourceGroup == '') {
+        if (!resourceGroup || resourceGroup == '' || resourceGroup.contains('[')) {
             resourceGroup = sh(
                 script: "grep 'resource_group_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
                 returnStdout: true
             ).trim()
+        }
+        
+        if (!resourceGroup || resourceGroup == '' || resourceGroup.contains('[')) {
+            resourceGroup = "cloud-pratice-Tanishq.Parab-RG"
         }
         
         return resourceGroup
@@ -125,15 +129,19 @@ def getResourceGroupName(config) {
 def getAppGatewayName(config) {
     try {
         def appGatewayName = sh(
-            script: "terraform output -raw app_gateway_name 2>/dev/null || echo ''",
+            script: "terraform output -raw app_gateway_name 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo ''",
             returnStdout: true
         ).trim()
         
-        if (!appGatewayName || appGatewayName == '') {
+        if (!appGatewayName || appGatewayName == '' || appGatewayName.contains('[')) {
             appGatewayName = sh(
                 script: "grep 'app_gateway_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
                 returnStdout: true
             ).trim()
+        }
+        
+        if (!appGatewayName || appGatewayName == '' || appGatewayName.contains('[')) {
+            appGatewayName = "blue-green-appgw"
         }
         
         return appGatewayName
