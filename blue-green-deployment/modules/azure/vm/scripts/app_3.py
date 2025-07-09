@@ -10,7 +10,7 @@ blog_posts = [
     {
         "id": "1",
         "title": "Welcome to App 3 Blue-Green Deployment Blog",
-        "content": "This is a demo #15 of App 3 blog application running with blue-green deployment on Azure VM.",
+        "content": "This is a demo #17 of App 3 blog application running with blue-green deployment on Azure VM.",
         "author": "Admin",
         "date": "2023-06-15"
     },
