@@ -265,50 +265,31 @@ def deployToBlueVM(Map config) {
     echo "🔍 Deploy Debug - Blue pool config: ${bluePoolConfig}"
     echo "🔍 Deploy Debug - Green pool config: ${greenPoolConfig}"
     
-    // Check which backend pool is actually receiving traffic
-    def activePoolName = sh(
-        script: """az network application-gateway url-path-map show \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name pathMap \\
-            --query "pathRules[?paths[0]=='/${appName}*'].backendAddressPool.id" \\
-            --output tsv 2>/dev/null | sed 's|.*/||' || echo 'none'""",
-        returnStdout: true
-    ).trim()
+    // Check which backend pool currently has targets (same as EC2 logic)
+    def blueHasTargets = bluePoolConfig != '[]' && !bluePoolConfig.contains('"backendAddresses": []')
+    def greenHasTargets = greenPoolConfig != '[]' && !greenPoolConfig.contains('"backendAddresses": []')
     
-    echo "🔍 Deploy Debug - Active routing pool: ${activePoolName}"
-    
-    // Determine which environment is currently active based on routing
-    def blueIsActive = activePoolName == bluePoolName
-    def greenIsActive = activePoolName == greenPoolName
-    
-    // Fallback to backend address check if routing check fails
-    if (!blueIsActive && !greenIsActive) {
-        blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"backendAddresses": []')
-        greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"backendAddresses": []')
-        echo "🔍 Deploy Debug - Fallback detection - Blue has backends: ${blueIsActive}, Green has backends: ${greenIsActive}"
-    }
-    
-    echo "🔍 Deploy Debug - Blue is active: ${blueIsActive}"
-    echo "🔍 Deploy Debug - Green is active: ${greenIsActive}"
+    echo "🔍 Deploy Debug - Blue has targets: ${blueHasTargets}"
+    echo "🔍 Deploy Debug - Green has targets: ${greenHasTargets}"
     
     def targetEnv, targetVmTag, targetVmIp
     
-    if (blueIsActive && !greenIsActive) {
+    // Deploy to the inactive environment (same logic as EC2)
+    if (blueHasTargets && !greenHasTargets) {
         // Blue is active, deploy to Green
         targetEnv = "GREEN"
         targetVmTag = "${appName}-green-vm"
         echo "🔵 Blue is currently active, deploying to Green environment"
-    } else if (greenIsActive && !blueIsActive) {
+    } else if (greenHasTargets && !blueHasTargets) {
         // Green is active, deploy to Blue  
         targetEnv = "BLUE"
         targetVmTag = "${appName}-blue-vm"
         echo "🟢 Green is currently active, deploying to Blue environment"
     } else {
-        // For first deployment or unclear state, deploy to Blue
+        // Default: deploy to Blue (first deployment or both active)
         targetEnv = "BLUE"
         targetVmTag = "${appName}-blue-vm"
-        echo "🔄 Deploying to Blue environment (first deployment or unclear state)"
+        echo "🔄 Defaulting to Blue environment deployment"
     }
     
     echo "🎯 Deploying to ${targetEnv} environment (${targetVmTag})..."
@@ -414,60 +395,32 @@ def switchTraffic(Map config) {
         echo "🔍 Debug - Blue pool config: ${bluePoolConfig}"
         echo "🔍 Debug - Green pool config: ${greenPoolConfig}"
         
-        // Check which backend pool is actually receiving traffic by checking routing rules
-        def activePoolName = sh(
-            script: """az network application-gateway url-path-map show \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name pathMap \\
-                --query "pathRules[?paths[0]=='/${appName}*'].backendAddressPool.id" \\
-                --output tsv 2>/dev/null | sed 's|.*/||' || echo 'none'""",
-            returnStdout: true
-        ).trim()
+        // Check which backend pool currently has targets (same as EC2 logic)
+        def blueHasTargets = bluePoolConfig != '[]' && !bluePoolConfig.contains('"backendAddresses": []')
+        def greenHasTargets = greenPoolConfig != '[]' && !greenPoolConfig.contains('"backendAddresses": []')
         
-        echo "🔍 Debug - Active routing pool: ${activePoolName}"
-        
-        // Determine which environment is currently active based on routing
-        def blueIsActive = activePoolName == bluePoolName
-        def greenIsActive = activePoolName == greenPoolName
-        
-        // Fallback to backend address check if routing check fails
-        if (!blueIsActive && !greenIsActive) {
-            blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"backendAddresses": []')
-            greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"backendAddresses": []')
-            echo "🔍 Debug - Fallback detection - Blue has backends: ${blueIsActive}, Green has backends: ${greenIsActive}"
-        }
-        
-        echo "🔍 Debug - Blue is active: ${blueIsActive}"
-        echo "🔍 Debug - Green is active: ${greenIsActive}"
+        echo "🔍 Debug - Blue has targets: ${blueHasTargets}"
+        echo "🔍 Debug - Green has targets: ${greenHasTargets}"
         
         def currentEnv, targetEnv, targetPoolName, sourcePoolName
         
-        if (blueIsActive && !greenIsActive) {
+        if (blueHasTargets && !greenHasTargets) {
             currentEnv = "BLUE"
             targetEnv = "GREEN"
             targetPoolName = greenPoolName
             sourcePoolName = bluePoolName
-        } else if (greenIsActive && !blueIsActive) {
+        } else if (greenHasTargets && !blueHasTargets) {
             currentEnv = "GREEN"
             targetEnv = "BLUE"
             targetPoolName = bluePoolName
             sourcePoolName = greenPoolName
         } else {
-            // If both or neither are active, check which one was deployed to last
-            def lastDeployedEnv = env.TARGET_ENV ?: "BLUE"
-            if (lastDeployedEnv == "BLUE") {
-                currentEnv = "BLUE"
-                targetEnv = "GREEN"
-                targetPoolName = greenPoolName
-                sourcePoolName = bluePoolName
-            } else {
-                currentEnv = "GREEN"
-                targetEnv = "BLUE"
-                targetPoolName = bluePoolName
-                sourcePoolName = greenPoolName
-            }
-            echo "⚠️ Using last deployed environment (${lastDeployedEnv}) to determine switch direction"
+            // Default: assume Blue is active, switch to Green (same as EC2 logic)
+            echo "⚠️ Could not determine current environment clearly. Defaulting to switch from BLUE to GREEN."
+            currentEnv = "BLUE"
+            targetEnv = "GREEN"
+            targetPoolName = greenPoolName
+            sourcePoolName = bluePoolName
         }
         
         echo "🔄 Current active environment: ${currentEnv}"
