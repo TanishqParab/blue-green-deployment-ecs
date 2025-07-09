@@ -6,38 +6,7 @@ def call(config) {
 
         dir("${config.tfWorkingDir}") {
             sh "terraform apply -auto-approve tfplan"
-            
-            // Archive state file
-            try {
-                archiveArtifacts artifacts: 'terraform.tfstate*', fingerprint: true
-                echo "✅ State file archived"
-            } catch (Exception e) {
-                echo "⚠️ State file archiving failed: ${e.message}"
-            }
-            
-            // Archive Terraform configuration files
-            try {
-                archiveArtifacts artifacts: '*.tf,*.tfvars', allowEmptyArchive: true, fingerprint: true
-                echo "✅ Terraform config files archived"
-            } catch (Exception e) {
-                echo "⚠️ Terraform config archiving failed: ${e.message}"
-            }
-            
-            // Archive modules
-            try {
-                archiveArtifacts artifacts: 'modules/**/*', allowEmptyArchive: true, fingerprint: true
-                echo "✅ Modules archived"
-            } catch (Exception e) {
-                echo "⚠️ Modules archiving failed: ${e.message}"
-            }
-            
-            // Archive generated files
-            try {
-                archiveArtifacts artifacts: 'tfplan,.terraform.lock.hcl', allowEmptyArchive: true, fingerprint: true
-                echo "✅ Generated files archived"
-            } catch (Exception e) {
-                echo "⚠️ Generated files archiving failed: ${e.message}"
-            }
+            archiveArtifacts artifacts: 'terraform.tfstate', fingerprint: true
         }
 
         if (config.implementation == 'azure-vm') {
