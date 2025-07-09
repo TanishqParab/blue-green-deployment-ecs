@@ -261,9 +261,16 @@ def deployToBlueVM(Map config) {
         returnStdout: true
     ).trim()
     
+    // Debug: Show current backend pool configurations for deployment
+    echo "🔍 Deploy Debug - Blue pool config: ${bluePoolConfig}"
+    echo "🔍 Deploy Debug - Green pool config: ${greenPoolConfig}"
+    
     // Determine which environment is currently active and deploy to the inactive one
-    def blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
-    def greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
+    def blueIsActive = bluePoolConfig != '[]' && bluePoolConfig != 'null' && !bluePoolConfig.contains('"ipAddress":null') && !bluePoolConfig.contains('[]')
+    def greenIsActive = greenPoolConfig != '[]' && greenPoolConfig != 'null' && !greenPoolConfig.contains('"ipAddress":null') && !greenPoolConfig.contains('[]')
+    
+    echo "🔍 Deploy Debug - Blue is active: ${blueIsActive}"
+    echo "🔍 Deploy Debug - Green is active: ${greenIsActive}"
     
     def targetEnv, targetVmTag, targetVmIp
     
@@ -295,50 +302,9 @@ def deployToBlueVM(Map config) {
     if (!targetVmIp || targetVmIp == 'None') error "❌ No running ${targetEnv} VM found!"
     echo "✅ Deploying to ${targetEnv} VM: ${targetVmIp}"
     
-    // Enable password authentication on the VM first
-    echo "🔧 Enabling password authentication on ${targetEnv} VM..."
-    enablePasswordAuthentication(targetVmTag, resourceGroup)
-    
-    // Test SSH connectivity
-    echo "🔍 Testing SSH connectivity to ${targetVmIp}..."
-    withCredentials([usernamePassword(credentialsId: config.vmPasswordId ?: 'azure-vm-password', usernameVariable: 'VM_USER', passwordVariable: 'VM_PASS')]) {
-        try {
-            sh "timeout 10 sshpass -p '\$VM_PASS' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 azureuser@${targetVmIp} 'echo SSH_CONNECTION_SUCCESS'"
-            echo "✅ SSH connection test successful"
-        } catch (Exception e) {
-            echo "❌ SSH connection test failed: ${e.message}"
-            echo "⚠️ Attempting to reset VM password..."
-            resetVmPassword(targetVmTag, resourceGroup)
-            
-            // Retry SSH connection after password reset
-            try {
-                sh "timeout 10 sshpass -p '\$VM_PASS' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 azureuser@${targetVmIp} 'echo SSH_CONNECTION_SUCCESS'"
-                echo "✅ SSH connection successful after password reset"
-            } catch (Exception e3) {
-                echo "❌ SSH still failing after password reset: ${e3.message}"
-                echo "⚠️ Final troubleshooting - checking SSH config..."
-                
-                // Check SSH configuration via Azure Run Command
-                sh """
-                az vm run-command invoke \\
-                    --resource-group ${resourceGroup} \\
-                    --name ${targetVmTag} \\
-                    --command-id RunShellScript \\
-                    --scripts "echo 'SSH Config Check:'; grep -E '^(PasswordAuthentication|PubkeyAuthentication|AuthenticationMethods)' /etc/ssh/sshd_config; echo 'SSH Service Status:'; systemctl status sshd --no-pager -l; echo 'Network Listeners:'; netstat -tlnp | grep :22"
-                """
-                
-                echo "⚠️ SSH authentication failed even after password reset."
-                echo "⚠️ Possible issues:"
-                echo "   1. VM password might be different from Terraform configuration"
-                echo "   2. Network security group might be blocking SSH"
-                echo "   3. VM might have custom SSH configuration"
-                echo "⚠️ Skipping SSH deployment and continuing with pipeline..."
-                
-                // Set a flag to skip SSH operations
-                env.SKIP_SSH_DEPLOYMENT = 'true'
-            }
-        }
-    }
+    // Skip SSH and use Azure Run Command directly
+    echo "🚀 Using Azure Run Command for deployment (SSH disabled)"
+    env.SKIP_SSH_DEPLOYMENT = 'true'
 
     // Determine app filename and versioning
     def appBase = appName.replace('app', '')
@@ -348,82 +314,46 @@ def deployToBlueVM(Map config) {
     def appPath = config.appPath ?: "${config.tfWorkingDir ?: env.WORKSPACE + '/blue-green-deployment'}/modules/azure/vm/scripts"
     def appFileSource = "${appPath}/app_${appBase}.py"
 
-    if (env.SKIP_SSH_DEPLOYMENT == 'true') {
-        echo "⚠️ SSH deployment failed, switching to Azure Run Command deployment"
-        deployViaAzureRunCommand(targetVmTag, resourceGroup, appName, appPath, appFileSource, appFileVer, appSymlink)
-        env.TARGET_VM_IP = targetVmIp
-        env.TARGET_ENV = targetEnv
-    } else {
-        // Use password authentication for SSH connections
-        withCredentials([usernamePassword(credentialsId: config.vmPasswordId ?: 'azure-vm-password', usernameVariable: 'VM_USER', passwordVariable: 'VM_PASS')]) {
-            sh """
-                # Upload new version and switch symlink using sshpass
-                echo "📤 Uploading ${appFileSource} to ${targetVmIp}:/home/azureuser/${appFileVer}"
-                sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appFileSource} azureuser@${targetVmIp}:/home/azureuser/${appFileVer}
-                echo "🔗 Creating symlink from ${appFileVer} to ${appSymlink}"
-                sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no azureuser@${targetVmIp} '
-                    ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink} &&
-                    echo "Symlink created successfully" &&
-                    ls -la /home/azureuser/${appSymlink}* &&
-                    echo "File contents preview:" &&
-                    head -5 /home/azureuser/${appSymlink}
-                '
-
-                # Setup script and restart service
-                echo "🔧 Uploading setup script and restarting Flask service"
-                sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appPath}/setup_flask_service_switch.py azureuser@${targetVmIp}:/home/azureuser/
-                sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no azureuser@${targetVmIp} '
-                    chmod +x /home/azureuser/setup_flask_service_switch.py &&
-                    echo "Running setup script for ${appName}" &&
-                    sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} switch
-                '
-            """
-        }
-        
-        env.TARGET_VM_IP = targetVmIp
-        env.TARGET_ENV = targetEnv
-    }
+    // Deploy using Azure Run Command only
+    echo "🚀 Deploying via Azure Run Command to ${targetEnv} VM"
+    deployViaAzureRunCommand(targetVmTag, resourceGroup, appName, appPath, appFileSource, appFileVer, appSymlink)
+    env.TARGET_VM_IP = targetVmIp
+    env.TARGET_ENV = targetEnv
 
     env.TARGET_VM_IP = targetVmIp
     env.TARGET_ENV = targetEnv
 
     // Health Check
-    if (env.SKIP_SSH_DEPLOYMENT == 'true') {
-        echo "⚠️ Skipping health check due to SSH deployment being skipped"
-        echo "📝 Manual verification needed: Check http://${targetVmIp}/app2 for updated version"
-        echo "✅ Continuing pipeline - manual verification required"
-    } else {
-        echo "🔍 Monitoring health of ${targetEnv} VM..."
-        def healthStatus = ''
-        def attempts = 0
-        def maxAttempts = 30
+    echo "🔍 Monitoring health of ${targetEnv} VM..."
+    def healthStatus = ''
+    def attempts = 0
+    def maxAttempts = 15  // Reduced attempts since Azure Run Command deployment is faster
 
-        while (healthStatus != 'healthy' && attempts < maxAttempts) {
-            sleep(time: 10, unit: 'SECONDS')
-            try {
-                def response = sh(
-                    script: "curl -s -o /dev/null -w '%{http_code}' http://${targetVmIp}/health || echo '000'",
-                    returnStdout: true
-                ).trim()
-                
-                if (response == '200') {
-                    healthStatus = 'healthy'
-                } else {
-                    healthStatus = 'unhealthy'
-                }
-            } catch (Exception e) {
+    while (healthStatus != 'healthy' && attempts < maxAttempts) {
+        sleep(time: 10, unit: 'SECONDS')
+        try {
+            def response = sh(
+                script: "curl -s -o /dev/null -w '%{http_code}' http://${targetVmIp}/health || echo '000'",
+                returnStdout: true
+            ).trim()
+            
+            if (response == '200') {
+                healthStatus = 'healthy'
+            } else {
                 healthStatus = 'unhealthy'
             }
-            attempts++
-            echo "Health status check attempt ${attempts}: ${healthStatus}"
+        } catch (Exception e) {
+            healthStatus = 'unhealthy'
         }
+        attempts++
+        echo "Health status check attempt ${attempts}: ${healthStatus}"
+    }
 
-        if (healthStatus != 'healthy') {
-            echo "⚠️ ${targetEnv} VM health check failed after ${maxAttempts} attempts"
-            echo "📝 Manual verification recommended: Check http://${targetVmIp}/app2"
-        } else {
-            echo "✅ ${targetEnv} VM is healthy and ready for traffic!"
-        }
+    if (healthStatus != 'healthy') {
+        echo "⚠️ ${targetEnv} VM health check failed after ${maxAttempts} attempts"
+        echo "📝 Manual verification: Check http://${targetVmIp}/${appName}"
+    } else {
+        echo "✅ ${targetEnv} VM is healthy and ready for traffic!"
     }
 }
 
@@ -458,9 +388,16 @@ def switchTraffic(Map config) {
             returnStdout: true
         ).trim()
         
+        // Debug: Show current backend pool configurations
+        echo "🔍 Debug - Blue pool config: ${bluePoolConfig}"
+        echo "🔍 Debug - Green pool config: ${greenPoolConfig}"
+        
         // Determine which environment is currently active
-        def blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
-        def greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
+        def blueIsActive = bluePoolConfig != '[]' && bluePoolConfig != 'null' && !bluePoolConfig.contains('"ipAddress":null') && !bluePoolConfig.contains('[]')
+        def greenIsActive = greenPoolConfig != '[]' && greenPoolConfig != 'null' && !greenPoolConfig.contains('"ipAddress":null') && !greenPoolConfig.contains('[]')
+        
+        echo "🔍 Debug - Blue is active: ${blueIsActive}"
+        echo "🔍 Debug - Green is active: ${greenIsActive}"
         
         def currentEnv, targetEnv, targetPoolName, sourcePoolName
         
@@ -498,6 +435,40 @@ def switchTraffic(Map config) {
             error "❌ Could not get IP for target VM: ${targetVmTag}"
         }
         
+        // Verify target VM health before switching traffic
+        echo "🔍 Verifying ${targetEnv} VM health before traffic switch..."
+        def healthCheckPassed = false
+        def healthAttempts = 0
+        def maxHealthAttempts = 20
+        
+        while (!healthCheckPassed && healthAttempts < maxHealthAttempts) {
+            try {
+                def healthResponse = sh(
+                    script: "curl -s -o /dev/null -w '%{http_code}' http://${targetVmIp}/${appName} || echo '000'",
+                    returnStdout: true
+                ).trim()
+                
+                if (healthResponse == '200') {
+                    healthCheckPassed = true
+                    echo "✅ ${targetEnv} VM health check passed (${healthResponse})"
+                } else {
+                    echo "⚠️ ${targetEnv} VM health check failed (${healthResponse}), attempt ${healthAttempts + 1}/${maxHealthAttempts}"
+                }
+            } catch (Exception e) {
+                echo "⚠️ ${targetEnv} VM health check error: ${e.message}"
+            }
+            
+            if (!healthCheckPassed) {
+                sleep(15)
+                healthAttempts++
+            }
+        }
+        
+        if (!healthCheckPassed) {
+            echo "❌ ${targetEnv} VM failed health checks after ${maxHealthAttempts} attempts"
+            echo "⚠️ Proceeding with traffic switch anyway - manual verification required"
+        }
+        
         // Update the target backend pool with the VM IP
         sh """
         az network application-gateway address-pool update \\
@@ -506,6 +477,10 @@ def switchTraffic(Map config) {
             --name ${targetPoolName} \\
             --set backendAddresses='[{"ipAddress":"${targetVmIp}"}]'
         """
+        
+        // Wait for Application Gateway to register the new backend
+        echo "⏳ Waiting for Application Gateway to register new backend..."
+        sleep(30)
         
         // Clear the source backend pool
         sh """
@@ -531,6 +506,35 @@ def switchTraffic(Map config) {
         }
         
         echo "✅✅✅ Traffic successfully switched from ${currentEnv} to ${targetEnv} (${targetVmIp})!"
+        echo "🌐 Application should now be accessible via Application Gateway"
+        echo "📝 Direct VM access: http://${targetVmIp}/${appName}"
+        
+        // Final health check via Application Gateway
+        echo "🔍 Final health check via Application Gateway..."
+        sleep(10)
+        try {
+            def gatewayIp = sh(
+                script: "az network public-ip show --resource-group ${resourceGroup} --name ${appGatewayName}-ip --query ipAddress --output tsv 2>/dev/null || echo 'unknown'",
+                returnStdout: true
+            ).trim()
+            
+            if (gatewayIp != 'unknown') {
+                def gatewayResponse = sh(
+                    script: "curl -s -o /dev/null -w '%{http_code}' http://${gatewayIp}/${appName} || echo '000'",
+                    returnStdout: true
+                ).trim()
+                
+                if (gatewayResponse == '200') {
+                    echo "✅ Application Gateway health check passed (${gatewayResponse})"
+                    echo "🌐 Application accessible at: http://${gatewayIp}/${appName}"
+                } else {
+                    echo "⚠️ Application Gateway health check failed (${gatewayResponse})"
+                    echo "📝 Manual verification needed: http://${gatewayIp}/${appName}"
+                }
+            }
+        } catch (Exception e) {
+            echo "⚠️ Could not perform Application Gateway health check: ${e.message}"
+        }
     } catch (Exception e) {
         echo "⚠️ Error switching traffic: ${e.message}"
         throw e
@@ -642,76 +646,28 @@ def getAppGatewayName(config) {
     }
 }
 
-def enablePasswordAuthentication(String vmName, String resourceGroup) {
-    echo "🔧 Enabling password authentication on VM: ${vmName}"
-    try {
-        sh """
-        az vm run-command invoke \\
-            --resource-group ${resourceGroup} \\
-            --name ${vmName} \\
-            --command-id RunShellScript \\
-            --scripts "sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config; sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config; sudo systemctl restart sshd; echo 'Password authentication enabled'"
-        """
-        echo "✅ Password authentication enabled on ${vmName}"
-        sleep(5) // Allow SSH service to restart
-    } catch (Exception e) {
-        echo "⚠️ Could not enable password authentication via run-command: ${e.message}"
-    }
-}
-
-def enablePasswordAuthenticationViaRunCommand(String vmName, String resourceGroup) {
-    echo "🔧 Attempting to enable password authentication via Azure Run Command on ${vmName}"
-    try {
-        sh """
-        az vm run-command invoke \\
-            --resource-group ${resourceGroup} \\
-            --name ${vmName} \\
-            --command-id RunShellScript \\
-            --scripts "echo 'Checking SSH config...'; grep -i passwordauth /etc/ssh/sshd_config; echo 'Enabling password auth...'; sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config; sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config; sudo systemctl restart sshd; echo 'SSH service restarted'; grep -i passwordauth /etc/ssh/sshd_config"
-        """
-        echo "✅ Password authentication configuration updated on ${vmName}"
-        sleep(10) // Allow more time for SSH service to restart
-    } catch (Exception e) {
-        echo "⚠️ Failed to enable password authentication via run-command: ${e.message}"
-    }
-}
-
-def resetVmPassword(String vmName, String resourceGroup) {
-    echo "🔑 Resetting password for VM: ${vmName}"
-    try {
-        sh """
-        az vm user update \\
-            --resource-group ${resourceGroup} \\
-            --name ${vmName} \\
-            --username azureuser \\
-            --password 'SecureP@ssw0rd123!'
-        """
-        echo "✅ Password reset completed for ${vmName}"
-        sleep(15) // Allow time for password reset to take effect
-    } catch (Exception e) {
-        echo "⚠️ Failed to reset password: ${e.message}"
-    }
-}
+// SSH-related functions removed - using Azure Run Command only
 
 def deployViaAzureRunCommand(String vmName, String resourceGroup, String appName, String appPath, String appFileSource, String appFileVer, String appSymlink) {
     echo "🚀 Deploying via Azure Run Command to ${vmName}"
     
     try {
-        // Read the app file content
+        // Read the app file content and encode it as base64 to avoid shell escaping issues
         def appContent = readFile(appFileSource)
+        def encodedContent = appContent.bytes.encodeBase64().toString()
         
         // Create a script that will:
-        // 1. Create the versioned app file
+        // 1. Decode and create the versioned app file
         // 2. Create symlink
         // 3. Download and run setup script
         def deployScript = """
 #!/bin/bash
 set -e
 
-# Create versioned app file
-cat > /home/azureuser/${appFileVer} << 'EOF'
-${appContent}
-EOF
+echo "Starting deployment for ${appName}..."
+
+# Create versioned app file from base64 encoded content
+echo "${encodedContent}" | base64 -d > /home/azureuser/${appFileVer}
 
 # Create symlink
 ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}
@@ -719,14 +675,19 @@ echo "Symlink created successfully"
 ls -la /home/azureuser/${appSymlink}*
 
 # Download setup script from GitHub
-wget -O /home/azureuser/setup_flask_service_switch.py https://raw.githubusercontent.com/TanishqParab/blue-green-deployment-ecs/main/Multi-App/blue-green-deployment/modules/azure/vm/scripts/setup_flask_service_switch.py
+echo "Downloading setup script..."
+wget -q -O /home/azureuser/setup_flask_service_switch.py https://raw.githubusercontent.com/TanishqParab/blue-green-deployment-ecs/main/Multi-App/blue-green-deployment/modules/azure/vm/scripts/setup_flask_service_switch.py
 
 # Run setup script
+echo "Running setup script..."
 chmod +x /home/azureuser/setup_flask_service_switch.py
 sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} switch
 
-echo "Deployment completed successfully"
+echo "Deployment completed successfully for ${appName}"
 """
+        
+        // Write the script to a temporary file to avoid shell escaping issues
+        writeFile file: 'deploy_script.sh', text: deployScript
         
         // Execute the deployment script via Azure Run Command
         sh """
@@ -734,7 +695,7 @@ echo "Deployment completed successfully"
             --resource-group ${resourceGroup} \\
             --name ${vmName} \\
             --command-id RunShellScript \\
-            --scripts '${deployScript}'
+            --script-path deploy_script.sh
         """
         
         echo "✅ Deployment via Azure Run Command completed successfully"
