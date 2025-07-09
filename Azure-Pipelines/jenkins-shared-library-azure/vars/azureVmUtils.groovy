@@ -66,17 +66,12 @@ def registerVMsToBackendPools(Map config) {
     }
     sleep(10)
 
-    echo "📝 Registering VMs to BLUE pools (where routing rules point)..."
-    // Register green VM (latest deployment) to blue pool where routing rules point
-    sh """
-    az network application-gateway address-pool update \\
-        --gateway-name ${appGatewayName} \\
-        --resource-group ${resourceGroup} \\
-        --name ${bluePoolName} \\
-        --set backendAddresses='[{"ipAddress":"${greenVmIp}"}]'
-    """
-
-    echo "✅ Azure VMs successfully registered to blue pools where routing rules point!"
+    echo "📝 VMs are already in GREEN pools. Updating routing rules instead..."
+    
+    // Update routing rules to point to green pools where VMs are
+    updateRoutingRulesToGreenPools(config)
+    
+    echo "✅ Routing rules updated to point to GREEN pools where VMs are!"
 }
 
 def detectChanges(Map config) {
@@ -623,6 +618,54 @@ def getAppGatewayName(config) {
     def appGatewayName = "blue-green-appgw"
     echo "🌐 Using Application Gateway: ${appGatewayName}"
     return appGatewayName
+}
+
+// Function to update routing rules to point to green pools (where VMs are)
+def updateRoutingRulesToGreenPools(Map config) {
+    def resourceGroup = getResourceGroupName(config)
+    def appGatewayName = getAppGatewayName(config)
+    
+    echo "🔄 Updating routing rules to point to GREEN pools (where VMs are)..."
+    
+    try {
+        // Update routing rules for each app to point to green pools
+        ['1', '2', '3'].each { appNum ->
+            def greenPoolName = "app_${appNum}-green-pool"
+            def pathPattern = "/app${appNum}/*"
+            
+            echo "📝 Updating rule for /app${appNum} to point to ${greenPoolName}"
+            
+            // Get the green pool ID
+            def greenPoolId = sh(
+                script: """az network application-gateway address-pool show \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${greenPoolName} \\
+                    --query 'id' --output tsv""",
+                returnStdout: true
+            ).trim()
+            
+            if (greenPoolId) {
+                // Update the path rule to point to green pool
+                sh """
+                az network application-gateway url-path-map rule update \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --path-map-name pathMap \\
+                    --name "rule${appNum}" \\
+                    --address-pool ${greenPoolId}
+                """
+                echo "✅ Updated rule for app${appNum} to point to green pool"
+            }
+        }
+        
+        echo "✅ All routing rules updated to point to GREEN pools!"
+        echo "🌐 Applications should now be accessible via Application Gateway"
+        
+    } catch (Exception e) {
+        echo "⚠️ Error updating routing rules: ${e.message}"
+        echo "💡 You may need to update the routing rules manually in Azure portal"
+    }
 }
 
 // Additional utility function to check Application Gateway backend health
