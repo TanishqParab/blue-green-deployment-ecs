@@ -349,16 +349,10 @@ def deployToBlueVM(Map config) {
     def appFileSource = "${appPath}/app_${appBase}.py"
 
     if (env.SKIP_SSH_DEPLOYMENT == 'true') {
-        echo "⚠️ Skipping SSH deployment due to authentication issues"
-        echo "📝 To fix this issue:"
-        echo "   1. Verify the password in Jenkins credential 'azure-vm-password'"
-        echo "   2. Or manually deploy to the VM: ${targetVmIp}"
-        echo "   3. Or configure SSH key authentication instead"
-        
-        // Set health status to healthy to continue pipeline
+        echo "⚠️ SSH deployment failed, switching to Azure Run Command deployment"
+        deployViaAzureRunCommand(targetVmTag, resourceGroup, appName, appPath, appFileSource, appFileVer, appSymlink)
         env.TARGET_VM_IP = targetVmIp
         env.TARGET_ENV = targetEnv
-        echo "✅ Continuing pipeline without SSH deployment"
     } else {
         // Use password authentication for SSH connections
         withCredentials([usernamePassword(credentialsId: config.vmPasswordId ?: 'azure-vm-password', usernameVariable: 'VM_USER', passwordVariable: 'VM_PASS')]) {
@@ -696,5 +690,57 @@ def resetVmPassword(String vmName, String resourceGroup) {
         sleep(15) // Allow time for password reset to take effect
     } catch (Exception e) {
         echo "⚠️ Failed to reset password: ${e.message}"
+    }
+}
+
+def deployViaAzureRunCommand(String vmName, String resourceGroup, String appName, String appPath, String appFileSource, String appFileVer, String appSymlink) {
+    echo "🚀 Deploying via Azure Run Command to ${vmName}"
+    
+    try {
+        // Read the app file content
+        def appContent = readFile(appFileSource)
+        
+        // Create a script that will:
+        // 1. Create the versioned app file
+        // 2. Create symlink
+        // 3. Download and run setup script
+        def deployScript = """
+#!/bin/bash
+set -e
+
+# Create versioned app file
+cat > /home/azureuser/${appFileVer} << 'EOF'
+${appContent}
+EOF
+
+# Create symlink
+ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}
+echo "Symlink created successfully"
+ls -la /home/azureuser/${appSymlink}*
+
+# Download setup script from GitHub
+wget -O /home/azureuser/setup_flask_service_switch.py https://raw.githubusercontent.com/TanishqParab/blue-green-deployment-ecs/main/Multi-App/blue-green-deployment/modules/azure/vm/scripts/setup_flask_service_switch.py
+
+# Run setup script
+chmod +x /home/azureuser/setup_flask_service_switch.py
+sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} switch
+
+echo "Deployment completed successfully"
+"""
+        
+        // Execute the deployment script via Azure Run Command
+        sh """
+        az vm run-command invoke \\
+            --resource-group ${resourceGroup} \\
+            --name ${vmName} \\
+            --command-id RunShellScript \\
+            --scripts '${deployScript}'
+        """
+        
+        echo "✅ Deployment via Azure Run Command completed successfully"
+        
+    } catch (Exception e) {
+        echo "❌ Deployment via Azure Run Command failed: ${e.message}"
+        echo "⚠️ Manual deployment may be required"
     }
 }
