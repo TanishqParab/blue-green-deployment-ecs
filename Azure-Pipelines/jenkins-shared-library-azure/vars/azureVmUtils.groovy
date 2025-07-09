@@ -294,6 +294,31 @@ def deployToBlueVM(Map config) {
 
     if (!targetVmIp || targetVmIp == 'None') error "❌ No running ${targetEnv} VM found!"
     echo "✅ Deploying to ${targetEnv} VM: ${targetVmIp}"
+    
+    // Enable password authentication on the VM first
+    echo "🔧 Enabling password authentication on ${targetEnv} VM..."
+    enablePasswordAuthentication(targetVmTag, resourceGroup)
+    
+    // Test SSH connectivity
+    echo "🔍 Testing SSH connectivity to ${targetVmIp}..."
+    withCredentials([usernamePassword(credentialsId: config.vmPasswordId ?: 'azure-vm-password', usernameVariable: 'VM_USER', passwordVariable: 'VM_PASS')]) {
+        try {
+            sh "timeout 10 sshpass -p '\$VM_PASS' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 azureuser@${targetVmIp} 'echo SSH_CONNECTION_SUCCESS'"
+            echo "✅ SSH connection test successful"
+        } catch (Exception e) {
+            echo "❌ SSH connection test failed: ${e.message}"
+            echo "⚠️ Attempting to enable password authentication..."
+            // Try to enable password auth via Azure Run Command
+            enablePasswordAuthenticationViaRunCommand(targetVmTag, resourceGroup)
+            // Retry SSH connection
+            try {
+                sh "timeout 10 sshpass -p '\$VM_PASS' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 azureuser@${targetVmIp} 'echo SSH_CONNECTION_SUCCESS'"
+                echo "✅ SSH connection successful after enabling password auth"
+            } catch (Exception e2) {
+                error "SSH connectivity failed even after enabling password authentication: ${e2.message}"
+            }
+        }
+    }
 
     // Determine app filename and versioning
     def appBase = appName.replace('app', '')
@@ -307,24 +332,24 @@ def deployToBlueVM(Map config) {
     withCredentials([usernamePassword(credentialsId: config.vmPasswordId ?: 'azure-vm-password', usernameVariable: 'VM_USER', passwordVariable: 'VM_PASS')]) {
         sh """
             # Upload new version and switch symlink using sshpass
-            echo "📤 Uploading ${appFileSource} to ${targetVmIp}:/home/\$VM_USER/${appFileVer}"
-            sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appFileSource} \$VM_USER@${targetVmIp}:/home/\$VM_USER/${appFileVer}
+            echo "📤 Uploading ${appFileSource} to ${targetVmIp}:/home/azureuser/${appFileVer}"
+            sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appFileSource} azureuser@${targetVmIp}:/home/azureuser/${appFileVer}
             echo "🔗 Creating symlink from ${appFileVer} to ${appSymlink}"
-            sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no \$VM_USER@${targetVmIp} '
-                ln -sf /home/\$VM_USER/${appFileVer} /home/\$VM_USER/${appSymlink} &&
+            sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no azureuser@${targetVmIp} '
+                ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink} &&
                 echo "Symlink created successfully" &&
-                ls -la /home/\$VM_USER/${appSymlink}* &&
+                ls -la /home/azureuser/${appSymlink}* &&
                 echo "File contents preview:" &&
-                head -5 /home/\$VM_USER/${appSymlink}
+                head -5 /home/azureuser/${appSymlink}
             '
 
             # Setup script and restart service
             echo "🔧 Uploading setup script and restarting Flask service"
-            sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appPath}/setup_flask_service_switch.py \$VM_USER@${targetVmIp}:/home/\$VM_USER/
-            sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no \$VM_USER@${targetVmIp} '
-                chmod +x /home/\$VM_USER/setup_flask_service_switch.py &&
+            sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appPath}/setup_flask_service_switch.py azureuser@${targetVmIp}:/home/azureuser/
+            sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no azureuser@${targetVmIp} '
+                chmod +x /home/azureuser/setup_flask_service_switch.py &&
                 echo "Running setup script for ${appName}" &&
-                sudo python3 /home/\$VM_USER/setup_flask_service_switch.py ${appName} switch
+                sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} switch
             '
         """
     }
@@ -577,5 +602,39 @@ def getAppGatewayName(config) {
     } catch (Exception e) {
         echo "⚠️ Could not determine Application Gateway name: ${e.message}"
         return "blue-green-appgw"
+    }
+}
+
+def enablePasswordAuthentication(String vmName, String resourceGroup) {
+    echo "🔧 Enabling password authentication on VM: ${vmName}"
+    try {
+        sh """
+        az vm run-command invoke \\
+            --resource-group ${resourceGroup} \\
+            --name ${vmName} \\
+            --command-id RunShellScript \\
+            --scripts "sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config; sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config; sudo systemctl restart sshd; echo 'Password authentication enabled'"
+        """
+        echo "✅ Password authentication enabled on ${vmName}"
+        sleep(5) // Allow SSH service to restart
+    } catch (Exception e) {
+        echo "⚠️ Could not enable password authentication via run-command: ${e.message}"
+    }
+}
+
+def enablePasswordAuthenticationViaRunCommand(String vmName, String resourceGroup) {
+    echo "🔧 Attempting to enable password authentication via Azure Run Command on ${vmName}"
+    try {
+        sh """
+        az vm run-command invoke \\
+            --resource-group ${resourceGroup} \\
+            --name ${vmName} \\
+            --command-id RunShellScript \\
+            --scripts "echo 'Checking SSH config...'; grep -i passwordauth /etc/ssh/sshd_config; echo 'Enabling password auth...'; sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config; sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config; sudo systemctl restart sshd; echo 'SSH service restarted'; grep -i passwordauth /etc/ssh/sshd_config"
+        """
+        echo "✅ Password authentication configuration updated on ${vmName}"
+        sleep(10) // Allow more time for SSH service to restart
+    } catch (Exception e) {
+        echo "⚠️ Failed to enable password authentication via run-command: ${e.message}"
     }
 }
