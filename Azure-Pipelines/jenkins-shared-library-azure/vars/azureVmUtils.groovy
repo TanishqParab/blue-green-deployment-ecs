@@ -307,16 +307,24 @@ def deployToBlueVM(Map config) {
     withCredentials([usernamePassword(credentialsId: config.vmPasswordId ?: 'azure-vm-password', usernameVariable: 'VM_USER', passwordVariable: 'VM_PASS')]) {
         sh """
             # Upload new version and switch symlink using sshpass
+            echo "📤 Uploading ${appFileSource} to ${targetVmIp}:/home/\$VM_USER/${appFileVer}"
             sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appFileSource} \$VM_USER@${targetVmIp}:/home/\$VM_USER/${appFileVer}
+            echo "🔗 Creating symlink from ${appFileVer} to ${appSymlink}"
             sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no \$VM_USER@${targetVmIp} '
-                ln -sf /home/\$VM_USER/${appFileVer} /home/\$VM_USER/${appSymlink}
+                ln -sf /home/\$VM_USER/${appFileVer} /home/\$VM_USER/${appSymlink} &&
+                echo "Symlink created successfully" &&
+                ls -la /home/\$VM_USER/${appSymlink}* &&
+                echo "File contents preview:" &&
+                head -5 /home/\$VM_USER/${appSymlink}
             '
 
-            # Setup script
-            sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appPath}/setup_flask_service.py \$VM_USER@${targetVmIp}:/home/\$VM_USER/
+            # Setup script and restart service
+            echo "🔧 Uploading setup script and restarting Flask service"
+            sshpass -p "\$VM_PASS" scp -o StrictHostKeyChecking=no ${appPath}/setup_flask_service_switch.py \$VM_USER@${targetVmIp}:/home/\$VM_USER/
             sshpass -p "\$VM_PASS" ssh -o StrictHostKeyChecking=no \$VM_USER@${targetVmIp} '
-                chmod +x /home/\$VM_USER/setup_flask_service.py &&
-                sudo python3 /home/\$VM_USER/setup_flask_service.py ${appName} switch
+                chmod +x /home/\$VM_USER/setup_flask_service_switch.py &&
+                echo "Running setup script for ${appName}" &&
+                sudo python3 /home/\$VM_USER/setup_flask_service_switch.py ${appName} switch
             '
         """
     }
