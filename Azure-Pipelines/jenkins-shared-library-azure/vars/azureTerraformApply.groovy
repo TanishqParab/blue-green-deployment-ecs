@@ -104,24 +104,23 @@ def getVmPublicIp(String vmName, Map config) {
 
 def getResourceGroupName(config) {
     try {
-        // First try terraform output with better error handling
-        def resourceGroup = ""
-        try {
-            resourceGroup = sh(
-                script: "terraform output -raw resource_group_name 2>/dev/null | tr -d '\n' | sed 's/[^a-zA-Z0-9._-]//g'",
-                returnStdout: true
-            ).trim()
-        } catch (Exception e) {
-            echo "Terraform output failed: ${e.message}"
-        }
+        // First try reading from tfvars file (most reliable)
+        def resourceGroup = sh(
+            script: "grep 'resource_group_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
+            returnStdout: true
+        ).trim()
         
-        // If terraform output failed or returned invalid data, use tfvars
-        if (!resourceGroup || resourceGroup == '' || resourceGroup.length() < 5 || resourceGroup.contains('╷') || resourceGroup.contains('[')) {
-            echo "Terraform output invalid, reading from tfvars file..."
-            resourceGroup = sh(
-                script: "grep 'resource_group_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
-                returnStdout: true
-            ).trim()
+        // If tfvars didn't work, try terraform output
+        if (!resourceGroup || resourceGroup == '') {
+            echo "Reading from terraform output..."
+            try {
+                resourceGroup = sh(
+                    script: "terraform output -raw resource_group_name 2>/dev/null | tr -d '\n' | sed 's/[^a-zA-Z0-9._-]//g'",
+                    returnStdout: true
+                ).trim()
+            } catch (Exception e) {
+                echo "Terraform output failed: ${e.message}"
+            }
         }
         
         // Final fallback to known resource group
@@ -129,32 +128,33 @@ def getResourceGroupName(config) {
             resourceGroup = "cloud-pratice-Tanishq.Parab-RG"
         }
         
+        echo "Using resource group: ${resourceGroup}"
         return resourceGroup
     } catch (Exception e) {
+        echo "Error getting resource group: ${e.message}"
         return "cloud-pratice-Tanishq.Parab-RG"
     }
 }
 
 def getAppGatewayName(config) {
     try {
-        // First try terraform output with better error handling
-        def appGatewayName = ""
-        try {
-            appGatewayName = sh(
-                script: "terraform output -raw app_gateway_name 2>/dev/null | tr -d '\n' | sed 's/[^a-zA-Z0-9._-]//g'",
-                returnStdout: true
-            ).trim()
-        } catch (Exception e) {
-            echo "Terraform output failed: ${e.message}"
-        }
+        // First try reading from tfvars file (most reliable)
+        def appGatewayName = sh(
+            script: "grep 'app_gateway_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
+            returnStdout: true
+        ).trim()
         
-        // If terraform output failed or returned invalid data, use tfvars
-        if (!appGatewayName || appGatewayName == '' || appGatewayName.length() < 5 || appGatewayName.contains('╷') || appGatewayName.contains('[')) {
-            echo "Terraform output invalid, reading from tfvars file..."
-            appGatewayName = sh(
-                script: "grep 'app_gateway_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
-                returnStdout: true
-            ).trim()
+        // If tfvars didn't work, try terraform output
+        if (!appGatewayName || appGatewayName == '') {
+            echo "Reading from terraform output..."
+            try {
+                appGatewayName = sh(
+                    script: "terraform output -raw app_gateway_name 2>/dev/null | tr -d '\n' | sed 's/[^a-zA-Z0-9._-]//g'",
+                    returnStdout: true
+                ).trim()
+            } catch (Exception e) {
+                echo "Terraform output failed: ${e.message}"
+            }
         }
         
         // Final fallback to known app gateway name
@@ -162,8 +162,10 @@ def getAppGatewayName(config) {
             appGatewayName = "blue-green-appgw"
         }
         
+        echo "Using app gateway: ${appGatewayName}"
         return appGatewayName
     } catch (Exception e) {
+        echo "Error getting app gateway name: ${e.message}"
         return "blue-green-appgw"
     }
 }
