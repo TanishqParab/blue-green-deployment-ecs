@@ -66,21 +66,17 @@ def registerVMsToBackendPools(Map config) {
     }
     sleep(10)
 
-    echo "📝 Registering VMs to the correct backend pools..."
+    echo "📝 Registering VMs to BLUE pools (where routing rules point)..."
+    // Register green VM (latest deployment) to blue pool where routing rules point
     sh """
     az network application-gateway address-pool update \\
         --gateway-name ${appGatewayName} \\
         --resource-group ${resourceGroup} \\
         --name ${bluePoolName} \\
-        --set backendAddresses='[{"ipAddress":"${blueVmIp}"}]'
-    az network application-gateway address-pool update \\
-        --gateway-name ${appGatewayName} \\
-        --resource-group ${resourceGroup} \\
-        --name ${greenPoolName} \\
         --set backendAddresses='[{"ipAddress":"${greenVmIp}"}]'
     """
 
-    echo "✅ Azure VMs successfully registered to correct backend pools!"
+    echo "✅ Azure VMs successfully registered to blue pools where routing rules point!"
 }
 
 def detectChanges(Map config) {
@@ -193,7 +189,7 @@ def updateApplication(Map config) {
     def bluePoolName = env.BLUE_POOL_NAME
     def greenPoolName = env.GREEN_POOL_NAME
 
-    echo "❌ Clearing old backend pool registrations..."
+    echo "🔄 Clearing all backend pool registrations..."
     try {
         sh """
         az network application-gateway address-pool update \\
@@ -213,18 +209,15 @@ def updateApplication(Map config) {
     }
     sleep(10)
 
-    echo "✅ Registering VMs to the correct backend pools..."
+    echo "✅ Registering VMs to BLUE pools (where routing rules point)..."
+    // Register the appropriate VM to the blue pool based on app
+    def activeVmIp = greenVmIp // Use green VM IP as it has the latest deployment
     sh """
     az network application-gateway address-pool update \\
         --gateway-name ${appGatewayName} \\
         --resource-group ${resourceGroup} \\
         --name ${bluePoolName} \\
-        --set backendAddresses='[{"ipAddress":"${blueVmIp}"}]'
-    az network application-gateway address-pool update \\
-        --gateway-name ${appGatewayName} \\
-        --resource-group ${resourceGroup} \\
-        --name ${greenPoolName} \\
-        --set backendAddresses='[{"ipAddress":"${greenVmIp}"}]'
+        --set backendAddresses='[{"ipAddress":"${activeVmIp}"}]'
     """
 
     echo "✅ VMs successfully registered to correct backend pools!"
