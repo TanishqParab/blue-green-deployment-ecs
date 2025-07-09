@@ -670,7 +670,7 @@ def updateRoutingRulesToGreenPools(Map config) {
                 az network application-gateway url-path-map rule update \\
                     --gateway-name ${appGatewayName} \\
                     --resource-group ${resourceGroup} \\
-                    --path-map-name \$(az network application-gateway url-path-map list --gateway-name ${appGatewayName} --resource-group ${resourceGroup} --query '[0].name' --output tsv) \\
+                    --path-map-name \$(az network application-gateway url-path-map list --gateway-name ${appGatewayName} --resource-group ${resourceGroup} --query '[0].name' --output tsv 2>/dev/null || echo 'main-path-map') \\
                     --name "rule${appNum}" \\
                     --address-pool ${greenPoolId}
                 """
@@ -714,14 +714,36 @@ def updateRoutingRuleToPool(String appGatewayName, String resourceGroup, String 
                 returnStdout: true
             ).trim()
             
-            // Update the path rule to point to the specified pool
-            sh """
-            az network application-gateway url-path-map update \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name ${pathMapName} \\
-                --set "pathRules[?name=='rule${appNum}'].backendAddressPool.id='${poolId}'"
-            """
+            // Get current path map configuration to find the rule index
+            def ruleIndex = sh(
+                script: """az network application-gateway url-path-map show \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${pathMapName} \\
+                    --query "pathRules[?name=='rule${appNum}'] | [0]" \\
+                    --output json | jq -r 'if . == null then "not_found" else "found" end' 2>/dev/null || echo 'not_found'""",
+                returnStdout: true
+            ).trim()
+            
+            if (ruleIndex != 'not_found') {
+                // Update the path rule using a direct index approach
+                sh """
+                RULE_INDEX=\$(az network application-gateway url-path-map show \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${pathMapName} \\
+                    --query "pathRules | map(@, @) | [?[1].name=='rule${appNum}'] | [0][0]" \\
+                    --output tsv 2>/dev/null || echo '0')
+                
+                az network application-gateway url-path-map update \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${pathMapName} \\
+                    --set "pathRules[\${RULE_INDEX:-0}].backendAddressPool.id='${poolId}'"
+                """
+            } else {
+                echo "⚠️ Rule rule${appNum} not found in path map"
+            }
             echo "✅ Updated routing rule for ${appName} to point to ${poolName}"
         } else {
             echo "⚠️ Could not get pool ID for ${poolName}"
