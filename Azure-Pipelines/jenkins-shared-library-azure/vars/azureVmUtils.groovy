@@ -618,46 +618,13 @@ def deployViaAzureRunCommand(String vmName, String resourceGroup, String appName
         def appContent = readFile(appFileSource)
         def encodedContent = appContent.bytes.encodeBase64().toString()
         
-        // Create a script that will:
-        // 1. Decode and create the versioned app file
-        // 2. Create symlink
-        // 3. Download and run setup script
-        def deployScript = """
-#!/bin/bash
-set -e
-
-echo "Starting deployment for ${appName}..."
-
-# Create versioned app file from base64 encoded content
-echo "${encodedContent}" | base64 -d > /home/azureuser/${appFileVer}
-
-# Create symlink
-ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}
-echo "Symlink created successfully"
-ls -la /home/azureuser/${appSymlink}*
-
-# Download setup script from GitHub
-echo "Downloading setup script..."
-wget -q -O /home/azureuser/setup_flask_service_switch.py https://raw.githubusercontent.com/TanishqParab/blue-green-deployment-ecs/main/Multi-App/blue-green-deployment/modules/azure/vm/scripts/setup_flask_service_switch.py
-
-# Run setup script
-echo "Running setup script..."
-chmod +x /home/azureuser/setup_flask_service_switch.py
-sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} switch
-
-echo "Deployment completed successfully for ${appName}"
-"""
-        
-        // Write the script to a temporary file to avoid shell escaping issues
-        writeFile file: 'deploy_script.sh', text: deployScript
-        
-        // Execute the deployment script via Azure Run Command
+        // Execute the deployment via Azure Run Command with inline script
         sh """
         az vm run-command invoke \\
             --resource-group ${resourceGroup} \\
             --name ${vmName} \\
             --command-id RunShellScript \\
-            --script-path deploy_script.sh
+            --scripts 'echo "Starting deployment for ${appName}..."; echo "${encodedContent}" | base64 -d > /home/azureuser/${appFileVer}; ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}; echo "Symlink created successfully"; ls -la /home/azureuser/${appSymlink}*; echo "Downloading setup script..."; curl -s -o /home/azureuser/setup_flask_service_switch.py https://raw.githubusercontent.com/TanishqParab/blue-green-deployment-ecs/main/Multi-App/blue-green-deployment/modules/azure/vm/scripts/setup_flask_service_switch.py; chmod +x /home/azureuser/setup_flask_service_switch.py; sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} switch; echo "Deployment completed successfully for ${appName}"'
         """
         
         echo "✅ Deployment via Azure Run Command completed successfully"
