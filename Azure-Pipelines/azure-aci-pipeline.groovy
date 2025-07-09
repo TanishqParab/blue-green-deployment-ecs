@@ -123,17 +123,9 @@ pipeline {
                         config.implementation = 'azure-aci'
                         echo "DEBUG: Executing Terraform for Azure ACI"
                         azureTerraformInit(config)
-                        
-                        dir(config.tfWorkingDir) {
-                            sh "terraform plan -var-file='${config.tfVarsFile}' -out=tfplan"
-                        }
-                        
+                        azureTerraformPlan(config)
                         azureApprovals.terraformApplyApproval(config)
-                        
-                        dir(config.tfWorkingDir) {
-                            sh "terraform apply -auto-approve tfplan"
-                            archiveArtifacts artifacts: 'terraform.tfstate', fingerprint: true
-                        }
+                        azureTerraformApply(config)
                     }
                     
                     if (params.MANUAL_BUILD == 'DESTROY') {
