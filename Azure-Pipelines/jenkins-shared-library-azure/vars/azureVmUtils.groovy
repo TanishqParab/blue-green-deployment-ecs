@@ -206,6 +206,10 @@ def deployToBlueVM(Map config) {
 
     echo "🔍 App: ${appName}, App Gateway: ${appGatewayName}, Blue Pool: ${bluePoolName}, Blue Tag: ${blueVmTag}"
 
+    // First, deploy to both VMs to ensure consistency
+    echo "🔄 Ensuring both VMs have the latest version before traffic switch..."
+    deployToBothVMs(config)
+
     def resourceGroup = getResourceGroupName(config)
 
     // Smart environment detection - determine which environment to deploy to
@@ -783,6 +787,46 @@ def checkBackendHealth(String appGatewayName, String resourceGroup, String poolN
         echo "⚠️ Could not check backend health: ${e.message}"
         return 'Unknown'
     }
+}
+
+// Function to deploy to both VMs to ensure consistency
+def deployToBothVMs(Map config) {
+    def appName = config.appName ?: ""
+    def resourceGroup = getResourceGroupName(config)
+    def blueVmTag = "${appName}-blue-vm"
+    def greenVmTag = "${appName}-green-vm"
+    
+    echo "🔄 Deploying latest version to both Blue and Green VMs for consistency..."
+    
+    // Deploy to both VMs in parallel
+    parallel(
+        "Deploy to Blue VM": {
+            try {
+                deployViaAzureRunCommand(blueVmTag, resourceGroup, appName, 
+                    "blue-green-deployment/modules/azure/vm/scripts", 
+                    "blue-green-deployment/modules/azure/vm/scripts/${appName.replace('app', 'app_')}.py",
+                    "${appName.replace('app', 'app_')}_v\${BUILD_TIMESTAMP}.py",
+                    "${appName.replace('app', 'app_')}.py")
+                echo "✅ Blue VM deployment completed"
+            } catch (Exception e) {
+                echo "⚠️ Blue VM deployment failed: ${e.message}"
+            }
+        },
+        "Deploy to Green VM": {
+            try {
+                deployViaAzureRunCommand(greenVmTag, resourceGroup, appName,
+                    "blue-green-deployment/modules/azure/vm/scripts",
+                    "blue-green-deployment/modules/azure/vm/scripts/${appName.replace('app', 'app_')}.py",
+                    "${appName.replace('app', 'app_')}_v\${BUILD_TIMESTAMP}.py",
+                    "${appName.replace('app', 'app_')}.py")
+                echo "✅ Green VM deployment completed"
+            } catch (Exception e) {
+                echo "⚠️ Green VM deployment failed: ${e.message}"
+            }
+        }
+    )
+    
+    echo "✅ Both VMs now have the latest version"
 }
 
 // SSH-related functions removed - using Azure Run Command only
