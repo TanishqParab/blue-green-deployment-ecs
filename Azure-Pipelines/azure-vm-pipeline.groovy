@@ -108,13 +108,9 @@ pipeline {
                     
                     if (env.EXECUTION_TYPE == 'FULL_DEPLOY' || env.EXECUTION_TYPE == 'MANUAL_APPLY') {
                         azureTerraformInit(config)
-                        dir(config.tfWorkingDir) {
-                            sh "terraform plan -var-file='${config.tfVarsFile}' -out=tfplan"
-                        }
+                        azureTerraformPlan(config)
                         azureApprovals.terraformApplyApproval(config)
-                        dir(config.tfWorkingDir) {
-                            sh "terraform apply -auto-approve tfplan"
-                        }
+                        azureTerraformApply(config)
                     }
                     
                     if (params.MANUAL_BUILD != 'DESTROY') {
