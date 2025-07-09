@@ -618,13 +618,17 @@ def deployViaAzureRunCommand(String vmName, String resourceGroup, String appName
         def appContent = readFile(appFileSource)
         def encodedContent = appContent.bytes.encodeBase64().toString()
         
+        // Read the setup script content and encode it
+        def setupScriptContent = readFile("${appPath}/setup_flask_service_switch.py")
+        def encodedSetupScript = setupScriptContent.bytes.encodeBase64().toString()
+        
         // Execute the deployment via Azure Run Command with inline script
         sh """
         az vm run-command invoke \\
             --resource-group ${resourceGroup} \\
             --name ${vmName} \\
             --command-id RunShellScript \\
-            --scripts 'echo "Starting deployment for ${appName}..."; echo "${encodedContent}" | base64 -d > /home/azureuser/${appFileVer}; ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}; echo "Symlink created successfully"; ls -la /home/azureuser/${appSymlink}*; echo "Downloading setup script..."; curl -s -o /home/azureuser/setup_flask_service_switch.py https://raw.githubusercontent.com/TanishqParab/blue-green-deployment-multi-cloud/main/blue-green-deployment/modules/azure/vm/scripts/setup_flask_service_switch.py; chmod +x /home/azureuser/setup_flask_service_switch.py; sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} switch; echo "Deployment completed successfully for ${appName}"'
+            --scripts 'echo "Starting deployment for ${appName}..."; echo "${encodedContent}" | base64 -d > /home/azureuser/${appFileVer}; ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}; echo "Symlink created successfully"; ls -la /home/azureuser/${appSymlink}*; echo "Creating setup script..."; echo "${encodedSetupScript}" | base64 -d > /home/azureuser/setup_flask_service_switch.py; chmod +x /home/azureuser/setup_flask_service_switch.py; sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} switch; echo "Deployment completed successfully for ${appName}"'
         """
         
         echo "✅ Deployment via Azure Run Command completed successfully"
