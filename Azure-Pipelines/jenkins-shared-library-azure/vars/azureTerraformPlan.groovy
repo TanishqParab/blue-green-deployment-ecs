@@ -46,30 +46,7 @@ def call(config) {
     echo "Running Azure Terraform Plan: ${planCommand}"
     dir("${config.tfWorkingDir}") {
         sh "${planCommand}"
-        
-        // Archive plan file
-        try {
-            archiveArtifacts artifacts: 'tfplan', onlyIfSuccessful: true, fingerprint: true
-            echo "✅ Plan file archived"
-        } catch (Exception e) {
-            echo "⚠️ Plan file archiving failed: ${e.message}"
-        }
-        
-        // Archive Terraform files
-        try {
-            archiveArtifacts artifacts: '*.tf,*.tfvars', allowEmptyArchive: true, fingerprint: true
-            echo "✅ Terraform config files archived"
-        } catch (Exception e) {
-            echo "⚠️ Terraform config archiving failed: ${e.message}"
-        }
-        
-        // Archive modules
-        try {
-            archiveArtifacts artifacts: 'modules/**/*', allowEmptyArchive: true, fingerprint: true
-            echo "✅ Modules archived"
-        } catch (Exception e) {
-            echo "⚠️ Modules archiving failed: ${e.message}"
-        }
+        archiveArtifacts artifacts: 'tfplan', onlyIfSuccessful: true
     }
 }
 
