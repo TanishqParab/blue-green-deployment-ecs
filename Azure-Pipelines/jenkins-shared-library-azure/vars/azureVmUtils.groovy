@@ -597,7 +597,7 @@ def tagSwapVMs(Map config) {
 def getResourceGroupName(config) {
     try {
         def resourceGroup = sh(
-            script: "cd blue-green-deployment && terraform output -raw resource_group_name 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo ''",
+            script: "cd blue-green-deployment && terraform output -raw resource_group_name 2>/dev/null | sed 's/\\x1b\\[[0-9;]*m//g' || echo ''",
             returnStdout: true
         ).trim()
         
@@ -623,7 +623,7 @@ def getResourceGroupName(config) {
 def getAppGatewayName(config) {
     try {
         def appGatewayName = sh(
-            script: "cd blue-green-deployment && terraform output -raw app_gateway_name 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo ''",
+            script: "cd blue-green-deployment && terraform output -raw app_gateway_name 2>/dev/null | sed 's/\\x1b\\[[0-9;]*m//g' || echo ''",
             returnStdout: true
         ).trim()
         
