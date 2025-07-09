@@ -674,12 +674,11 @@ def updateRoutingRuleToPool(String appGatewayName, String resourceGroup, String 
         if (poolId) {
             // Update the path rule to point to the specified pool
             sh """
-            az network application-gateway url-path-map rule update \\
+            az network application-gateway url-path-map update \\
                 --gateway-name ${appGatewayName} \\
                 --resource-group ${resourceGroup} \\
-                --path-map-name pathMap \\
-                --name "rule${appNum}" \\
-                --address-pool ${poolId}
+                --name pathMap \\
+                --set "pathRules[?name=='rule${appNum}'].backendAddressPool.id='${poolId}'"
             """
             echo "✅ Updated routing rule for ${appName} to point to ${poolName}"
         } else {
