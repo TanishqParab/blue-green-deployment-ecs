@@ -100,12 +100,14 @@ def prepareRollback(Map config) {
     if (currentPoolConfig == blueVmIp) {
         // Currently on Blue, rollback to Green
         env.CURRENT_ENV = "BLUE"
+        env.CURRENT_VM = blueVmTag
         env.ROLLBACK_ENV = "GREEN"
         env.ROLLBACK_VM = greenVmTag
         env.ROLLBACK_VM_IP = greenVmIp
     } else {
         // Currently on Green or unknown, rollback to Blue
         env.CURRENT_ENV = "GREEN"
+        env.CURRENT_VM = greenVmTag
         env.ROLLBACK_ENV = "BLUE"
         env.ROLLBACK_VM = blueVmTag
         env.ROLLBACK_VM_IP = blueVmIp
@@ -254,8 +256,17 @@ def executeAzureVmRollback(Map config) {
     
     // Optionally stop the current VM to save costs
     def currentVm = env.CURRENT_VM
-    echo "Stopping current VM to save costs: ${currentVm}"
-    sh "az vm deallocate -g ${resourceGroup} -n ${currentVm}"
+    if (currentVm && currentVm != 'null' && currentVm != '') {
+        echo "Stopping current VM to save costs: ${currentVm}"
+        try {
+            sh "az vm deallocate -g ${resourceGroup} -n ${currentVm}"
+            echo "✅ Current VM ${currentVm} stopped successfully"
+        } catch (Exception e) {
+            echo "⚠️ Failed to stop current VM ${currentVm}: ${e.message}"
+        }
+    } else {
+        echo "⚠️ Current VM not identified, skipping VM cleanup"
+    }
     
     echo "✅ Azure VM rollback completed successfully!"
 }
