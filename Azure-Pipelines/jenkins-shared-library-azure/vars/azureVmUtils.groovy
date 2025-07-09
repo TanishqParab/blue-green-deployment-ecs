@@ -231,7 +231,7 @@ def deployToBlueVM(Map config) {
     echo "🔍 Deploy Debug - Blue pool config: ${bluePoolConfig}"
     echo "🔍 Deploy Debug - Green pool config: ${greenPoolConfig}"
     
-    // Check which backend pool currently has targets (same as EC2 logic)
+    // Check which backend pool currently has targets
     def blueHasTargets = bluePoolConfig != '[]' && !bluePoolConfig.contains('"backendAddresses": []')
     def greenHasTargets = greenPoolConfig != '[]' && !greenPoolConfig.contains('"backendAddresses": []')
     
@@ -240,12 +240,45 @@ def deployToBlueVM(Map config) {
     
     def targetEnv, targetVmTag, targetVmIp
     
-    // Deploy to the inactive environment (same logic as EC2)
+    // Deploy to the inactive environment - if both have targets, determine current active from routing rules
     if (blueHasTargets && !greenHasTargets) {
         // Blue is active, deploy to Green
         targetEnv = "GREEN"
         targetVmTag = "${appName}-green-vm"
         echo "🔵 Blue is currently active, deploying to Green environment"
+    } else if (!blueHasTargets && greenHasTargets) {
+        // Green is active, deploy to Blue
+        targetEnv = "BLUE"
+        targetVmTag = "${appName}-blue-vm"
+        echo "🟢 Green is currently active, deploying to Blue environment"
+    } else if (blueHasTargets && greenHasTargets) {
+        // Both have targets - check routing rules to determine current active
+        def appNum = appName.replace('app', '')
+        def currentActivePool = sh(
+            script: """az network application-gateway url-path-map list \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --query "[0].pathRules[?name=='rule${appNum}'].backendAddressPool.id" \\
+                --output tsv 2>/dev/null || echo ''""",
+            returnStdout: true
+        ).trim()
+        
+        if (currentActivePool.contains('blue-pool')) {
+            // Blue is currently active in routing, deploy to Green
+            targetEnv = "GREEN"
+            targetVmTag = "${appName}-green-vm"
+            echo "🔵 Routing points to Blue pool, deploying to Green environment"
+        } else if (currentActivePool.contains('green-pool')) {
+            // Green is currently active in routing, deploy to Blue
+            targetEnv = "BLUE"
+            targetVmTag = "${appName}-blue-vm"
+            echo "🟢 Routing points to Green pool, deploying to Blue environment"
+        } else {
+            // Fallback - deploy to Blue
+            targetEnv = "BLUE"
+            targetVmTag = "${appName}-blue-vm"
+            echo "⚠️ Could not determine current active from routing, defaulting to Blue environment"
+        }
     } else if (greenHasTargets && !blueHasTargets) {
         // Green is active, deploy to Blue  
         targetEnv = "BLUE"
@@ -637,7 +670,7 @@ def updateRoutingRulesToGreenPools(Map config) {
                 az network application-gateway url-path-map rule update \\
                     --gateway-name ${appGatewayName} \\
                     --resource-group ${resourceGroup} \\
-                    --path-map-name pathMap \\
+                    --path-map-name \$(az network application-gateway url-path-map list --gateway-name ${appGatewayName} --resource-group ${resourceGroup} --query '[0].name' --output tsv) \\
                     --name "rule${appNum}" \\
                     --address-pool ${greenPoolId}
                 """
@@ -672,12 +705,21 @@ def updateRoutingRuleToPool(String appGatewayName, String resourceGroup, String 
         ).trim()
         
         if (poolId) {
+            // Get the correct path map name first
+            def pathMapName = sh(
+                script: """az network application-gateway url-path-map list \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --query '[0].name' --output tsv""",
+                returnStdout: true
+            ).trim()
+            
             // Update the path rule to point to the specified pool
             sh """
             az network application-gateway url-path-map update \\
                 --gateway-name ${appGatewayName} \\
                 --resource-group ${resourceGroup} \\
-                --name pathMap \\
+                --name ${pathMapName} \\
                 --set "pathRules[?name=='rule${appNum}'].backendAddressPool.id='${poolId}'"
             """
             echo "✅ Updated routing rule for ${appName} to point to ${poolName}"
