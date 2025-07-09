@@ -307,26 +307,36 @@ def deployToBlueVM(Map config) {
             echo "✅ SSH connection test successful"
         } catch (Exception e) {
             echo "❌ SSH connection test failed: ${e.message}"
-            echo "⚠️ Checking VM SSH configuration..."
+            echo "⚠️ Attempting to reset VM password..."
+            resetVmPassword(targetVmTag, resourceGroup)
             
-            // Check SSH configuration via Azure Run Command
-            sh """
-            az vm run-command invoke \\
-                --resource-group ${resourceGroup} \\
-                --name ${targetVmTag} \\
-                --command-id RunShellScript \\
-                --scripts "echo 'SSH Config Check:'; grep -E '^(PasswordAuthentication|PubkeyAuthentication|AuthenticationMethods)' /etc/ssh/sshd_config; echo 'SSH Service Status:'; systemctl status sshd --no-pager -l; echo 'Network Listeners:'; netstat -tlnp | grep :22"
-            """
-            
-            echo "⚠️ Password authentication appears to be enabled but SSH still fails."
-            echo "⚠️ This might be due to:"
-            echo "   1. Incorrect password in Jenkins credential 'azure-vm-password'"
-            echo "   2. Azure VM might require SSH key authentication"
-            echo "   3. Network security group blocking SSH"
-            echo "⚠️ Skipping SSH deployment and continuing with pipeline..."
-            
-            // Set a flag to skip SSH operations
-            env.SKIP_SSH_DEPLOYMENT = 'true'
+            // Retry SSH connection after password reset
+            try {
+                sh "timeout 10 sshpass -p '\$VM_PASS' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 azureuser@${targetVmIp} 'echo SSH_CONNECTION_SUCCESS'"
+                echo "✅ SSH connection successful after password reset"
+            } catch (Exception e3) {
+                echo "❌ SSH still failing after password reset: ${e3.message}"
+                echo "⚠️ Final troubleshooting - checking SSH config..."
+                
+                // Check SSH configuration via Azure Run Command
+                sh """
+                az vm run-command invoke \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${targetVmTag} \\
+                    --command-id RunShellScript \\
+                    --scripts "echo 'SSH Config Check:'; grep -E '^(PasswordAuthentication|PubkeyAuthentication|AuthenticationMethods)' /etc/ssh/sshd_config; echo 'SSH Service Status:'; systemctl status sshd --no-pager -l; echo 'Network Listeners:'; netstat -tlnp | grep :22"
+                """
+                
+                echo "⚠️ SSH authentication failed even after password reset."
+                echo "⚠️ Possible issues:"
+                echo "   1. VM password might be different from Terraform configuration"
+                echo "   2. Network security group might be blocking SSH"
+                echo "   3. VM might have custom SSH configuration"
+                echo "⚠️ Skipping SSH deployment and continuing with pipeline..."
+                
+                // Set a flag to skip SSH operations
+                env.SKIP_SSH_DEPLOYMENT = 'true'
+            }
         }
     }
 
@@ -669,5 +679,22 @@ def enablePasswordAuthenticationViaRunCommand(String vmName, String resourceGrou
         sleep(10) // Allow more time for SSH service to restart
     } catch (Exception e) {
         echo "⚠️ Failed to enable password authentication via run-command: ${e.message}"
+    }
+}
+
+def resetVmPassword(String vmName, String resourceGroup) {
+    echo "🔑 Resetting password for VM: ${vmName}"
+    try {
+        sh """
+        az vm user update \\
+            --resource-group ${resourceGroup} \\
+            --name ${vmName} \\
+            --username azureuser \\
+            --password 'SecureP@ssw0rd123!'
+        """
+        echo "✅ Password reset completed for ${vmName}"
+        sleep(15) // Allow time for password reset to take effect
+    } catch (Exception e) {
+        echo "⚠️ Failed to reset password: ${e.message}"
     }
 }
