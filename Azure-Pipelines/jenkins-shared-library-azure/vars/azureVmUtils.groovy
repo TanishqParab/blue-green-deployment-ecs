@@ -595,71 +595,17 @@ def tagSwapVMs(Map config) {
 }
 
 def getResourceGroupName(config) {
-    try {
-        // First try reading from tfvars file (most reliable)
-        def resourceGroup = sh(
-            script: "cd blue-green-deployment && grep 'resource_group_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
-            returnStdout: true
-        ).trim()
-        
-        // If tfvars didn't work, try terraform output
-        if (!resourceGroup || resourceGroup == '') {
-            echo "Reading from terraform output..."
-            try {
-                resourceGroup = sh(
-                    script: "cd blue-green-deployment && terraform output -raw resource_group_name 2>/dev/null | tr -d '\n' | sed 's/[^a-zA-Z0-9._-]//g'",
-                    returnStdout: true
-                ).trim()
-            } catch (Exception e) {
-                echo "Terraform output failed: ${e.message}"
-            }
-        }
-        
-        // Final fallback to known resource group
-        if (!resourceGroup || resourceGroup == '' || resourceGroup.length() < 5) {
-            resourceGroup = "cloud-pratice-Tanishq.Parab-RG"
-        }
-        
-        echo "📋 Using resource group: ${resourceGroup}"
-        return resourceGroup
-    } catch (Exception e) {
-        echo "⚠️ Could not determine resource group name: ${e.message}"
-        return "cloud-pratice-Tanishq.Parab-RG"
-    }
+    // Use known resource group directly since terraform output is unreliable
+    def resourceGroup = "cloud-pratice-Tanishq.Parab-RG"
+    echo "📋 Using resource group: ${resourceGroup}"
+    return resourceGroup
 }
 
 def getAppGatewayName(config) {
-    try {
-        // First try reading from tfvars file (most reliable)
-        def appGatewayName = sh(
-            script: "cd blue-green-deployment && grep 'app_gateway_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
-            returnStdout: true
-        ).trim()
-        
-        // If tfvars didn't work, try terraform output
-        if (!appGatewayName || appGatewayName == '') {
-            echo "Reading from terraform output..."
-            try {
-                appGatewayName = sh(
-                    script: "cd blue-green-deployment && terraform output -raw app_gateway_name 2>/dev/null | tr -d '\n' | sed 's/[^a-zA-Z0-9._-]//g'",
-                    returnStdout: true
-                ).trim()
-            } catch (Exception e) {
-                echo "Terraform output failed: ${e.message}"
-            }
-        }
-        
-        // Final fallback to known app gateway name
-        if (!appGatewayName || appGatewayName == '' || appGatewayName.length() < 5) {
-            appGatewayName = "blue-green-appgw"
-        }
-        
-        echo "🌐 Using Application Gateway: ${appGatewayName}"
-        return appGatewayName
-    } catch (Exception e) {
-        echo "⚠️ Could not determine Application Gateway name: ${e.message}"
-        return "blue-green-appgw"
-    }
+    // Use known app gateway name directly since terraform output is unreliable
+    def appGatewayName = "blue-green-appgw"
+    echo "🌐 Using Application Gateway: ${appGatewayName}"
+    return appGatewayName
 }
 
 // SSH-related functions removed - using Azure Run Command only
