@@ -597,18 +597,18 @@ def tagSwapVMs(Map config) {
 def getResourceGroupName(config) {
     try {
         def resourceGroup = sh(
-            script: "cd blue-green-deployment && terraform output -raw resource_group_name 2>/dev/null || echo ''",
+            script: "cd blue-green-deployment && terraform output -raw resource_group_name 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo ''",
             returnStdout: true
         ).trim()
         
-        if (!resourceGroup || resourceGroup == '' || resourceGroup.contains('Warning')) {
+        if (!resourceGroup || resourceGroup == '' || resourceGroup.contains('Warning') || resourceGroup.contains('[')) {
             resourceGroup = sh(
                 script: "cd blue-green-deployment && grep 'resource_group_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
                 returnStdout: true
             ).trim()
         }
         
-        if (!resourceGroup || resourceGroup == '') {
+        if (!resourceGroup || resourceGroup == '' || resourceGroup.contains('[')) {
             resourceGroup = "cloud-pratice-Tanishq.Parab-RG"
         }
         
@@ -623,18 +623,18 @@ def getResourceGroupName(config) {
 def getAppGatewayName(config) {
     try {
         def appGatewayName = sh(
-            script: "cd blue-green-deployment && terraform output -raw app_gateway_name 2>/dev/null || echo ''",
+            script: "cd blue-green-deployment && terraform output -raw app_gateway_name 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || echo ''",
             returnStdout: true
         ).trim()
         
-        if (!appGatewayName || appGatewayName == '' || appGatewayName.contains('Warning')) {
+        if (!appGatewayName || appGatewayName == '' || appGatewayName.contains('Warning') || appGatewayName.contains('[')) {
             appGatewayName = sh(
                 script: "cd blue-green-deployment && grep 'app_gateway_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
                 returnStdout: true
             ).trim()
         }
         
-        if (!appGatewayName || appGatewayName == '') {
+        if (!appGatewayName || appGatewayName == '' || appGatewayName.contains('[')) {
             appGatewayName = "blue-green-appgw"
         }
         
