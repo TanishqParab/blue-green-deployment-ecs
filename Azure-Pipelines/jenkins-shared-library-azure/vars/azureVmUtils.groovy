@@ -596,20 +596,30 @@ def tagSwapVMs(Map config) {
 
 def getResourceGroupName(config) {
     try {
-        def resourceGroup = sh(
-            script: "cd blue-green-deployment && terraform output -raw resource_group_name 2>/dev/null | sed 's/\\x1b\\[[0-9;]*m//g' || echo ''",
-            returnStdout: true
-        ).trim()
+        // First try terraform output with better error handling
+        def resourceGroup = ""
+        try {
+            resourceGroup = sh(
+                script: "cd blue-green-deployment && terraform output -raw resource_group_name 2>/dev/null | tr -d '\n' | sed 's/[^a-zA-Z0-9._-]//g'",
+                returnStdout: true
+            ).trim()
+        } catch (Exception e) {
+            echo "Terraform output failed: ${e.message}"
+        }
         
-        if (!resourceGroup || resourceGroup == '' || resourceGroup.contains('Warning') || resourceGroup.contains('[')) {
+        // If terraform output failed or returned invalid data, use tfvars
+        if (!resourceGroup || resourceGroup == '' || resourceGroup.length() < 5 || resourceGroup.contains('╷') || resourceGroup.contains('[')) {
+            echo "Terraform output invalid, reading from tfvars file..."
             resourceGroup = sh(
                 script: "cd blue-green-deployment && grep 'resource_group_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
                 returnStdout: true
             ).trim()
         }
         
-        if (!resourceGroup || resourceGroup == '' || resourceGroup.contains('[')) {
+        // Final fallback to known resource group
+        if (!resourceGroup || resourceGroup == '' || resourceGroup.length() < 5) {
             resourceGroup = "cloud-pratice-Tanishq.Parab-RG"
+            echo "Using fallback resource group: ${resourceGroup}"
         }
         
         echo "📋 Using resource group: ${resourceGroup}"
@@ -622,20 +632,30 @@ def getResourceGroupName(config) {
 
 def getAppGatewayName(config) {
     try {
-        def appGatewayName = sh(
-            script: "cd blue-green-deployment && terraform output -raw app_gateway_name 2>/dev/null | sed 's/\\x1b\\[[0-9;]*m//g' || echo ''",
-            returnStdout: true
-        ).trim()
+        // First try terraform output with better error handling
+        def appGatewayName = ""
+        try {
+            appGatewayName = sh(
+                script: "cd blue-green-deployment && terraform output -raw app_gateway_name 2>/dev/null | tr -d '\n' | sed 's/[^a-zA-Z0-9._-]//g'",
+                returnStdout: true
+            ).trim()
+        } catch (Exception e) {
+            echo "Terraform output failed: ${e.message}"
+        }
         
-        if (!appGatewayName || appGatewayName == '' || appGatewayName.contains('Warning') || appGatewayName.contains('[')) {
+        // If terraform output failed or returned invalid data, use tfvars
+        if (!appGatewayName || appGatewayName == '' || appGatewayName.length() < 5 || appGatewayName.contains('╷') || appGatewayName.contains('[')) {
+            echo "Terraform output invalid, reading from tfvars file..."
             appGatewayName = sh(
                 script: "cd blue-green-deployment && grep 'app_gateway_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
                 returnStdout: true
             ).trim()
         }
         
-        if (!appGatewayName || appGatewayName == '' || appGatewayName.contains('[')) {
+        // Final fallback to known app gateway name
+        if (!appGatewayName || appGatewayName == '' || appGatewayName.length() < 5) {
             appGatewayName = "blue-green-appgw"
+            echo "Using fallback app gateway: ${appGatewayName}"
         }
         
         echo "🌐 Using Application Gateway: ${appGatewayName}"
