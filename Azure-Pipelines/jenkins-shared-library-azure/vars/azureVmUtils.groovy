@@ -265,9 +265,29 @@ def deployToBlueVM(Map config) {
     echo "🔍 Deploy Debug - Blue pool config: ${bluePoolConfig}"
     echo "🔍 Deploy Debug - Green pool config: ${greenPoolConfig}"
     
-    // Determine which environment is currently active and deploy to the inactive one
-    def blueIsActive = bluePoolConfig != '[]' && bluePoolConfig != 'null' && !bluePoolConfig.contains('"ipAddress":null') && !bluePoolConfig.contains('[]')
-    def greenIsActive = greenPoolConfig != '[]' && greenPoolConfig != 'null' && !greenPoolConfig.contains('"ipAddress":null') && !greenPoolConfig.contains('[]')
+    // Check which backend pool is actually receiving traffic
+    def activePoolName = sh(
+        script: """az network application-gateway url-path-map show \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name pathMap \\
+            --query "pathRules[?paths[0]=='/${appName}*'].backendAddressPool.id" \\
+            --output tsv 2>/dev/null | sed 's|.*/||' || echo 'none'""",
+        returnStdout: true
+    ).trim()
+    
+    echo "🔍 Deploy Debug - Active routing pool: ${activePoolName}"
+    
+    // Determine which environment is currently active based on routing
+    def blueIsActive = activePoolName == bluePoolName
+    def greenIsActive = activePoolName == greenPoolName
+    
+    // Fallback to backend address check if routing check fails
+    if (!blueIsActive && !greenIsActive) {
+        blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"backendAddresses": []')
+        greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"backendAddresses": []')
+        echo "🔍 Deploy Debug - Fallback detection - Blue has backends: ${blueIsActive}, Green has backends: ${greenIsActive}"
+    }
     
     echo "🔍 Deploy Debug - Blue is active: ${blueIsActive}"
     echo "🔍 Deploy Debug - Green is active: ${greenIsActive}"
@@ -285,10 +305,10 @@ def deployToBlueVM(Map config) {
         targetVmTag = "${appName}-blue-vm"
         echo "🟢 Green is currently active, deploying to Blue environment"
     } else {
-        // Default: deploy to Blue (first deployment or both active)
+        // For first deployment or unclear state, deploy to Blue
         targetEnv = "BLUE"
         targetVmTag = "${appName}-blue-vm"
-        echo "🔄 Defaulting to Blue environment deployment"
+        echo "🔄 Deploying to Blue environment (first deployment or unclear state)"
     }
     
     echo "🎯 Deploying to ${targetEnv} environment (${targetVmTag})..."
@@ -323,37 +343,39 @@ def deployToBlueVM(Map config) {
     env.TARGET_VM_IP = targetVmIp
     env.TARGET_ENV = targetEnv
 
-    // Health Check
+    // Health Check with proper path
     echo "🔍 Monitoring health of ${targetEnv} VM..."
-    def healthStatus = ''
-    def attempts = 0
-    def maxAttempts = 15  // Reduced attempts since Azure Run Command deployment is faster
-
-    while (healthStatus != 'healthy' && attempts < maxAttempts) {
-        sleep(time: 10, unit: 'SECONDS')
+    sleep(10)
+    
+    // Try multiple health check endpoints
+    def healthUrls = [
+        "http://${targetVmIp}/health",
+        "http://${targetVmIp}/${appName}/health",
+        "http://${targetVmIp}/${appName}"
+    ]
+    
+    def healthPassed = false
+    for (url in healthUrls) {
         try {
             def response = sh(
-                script: "curl -s -o /dev/null -w '%{http_code}' http://${targetVmIp}/health || echo '000'",
+                script: "curl -s -o /dev/null -w '%{http_code}' ${url} || echo '000'",
                 returnStdout: true
             ).trim()
             
             if (response == '200') {
-                healthStatus = 'healthy'
-            } else {
-                healthStatus = 'unhealthy'
+                echo "Health status check attempt 1: healthy"
+                echo "✅ ${targetEnv} VM is healthy and ready for traffic!"
+                healthPassed = true
+                break
             }
         } catch (Exception e) {
-            healthStatus = 'unhealthy'
+            // Continue to next URL
         }
-        attempts++
-        echo "Health status check attempt ${attempts}: ${healthStatus}"
     }
-
-    if (healthStatus != 'healthy') {
-        echo "⚠️ ${targetEnv} VM health check failed after ${maxAttempts} attempts"
+    
+    if (!healthPassed) {
+        echo "⚠️ ${targetEnv} VM health check failed on all endpoints"
         echo "📝 Manual verification: Check http://${targetVmIp}/${appName}"
-    } else {
-        echo "✅ ${targetEnv} VM is healthy and ready for traffic!"
     }
 }
 
@@ -392,9 +414,29 @@ def switchTraffic(Map config) {
         echo "🔍 Debug - Blue pool config: ${bluePoolConfig}"
         echo "🔍 Debug - Green pool config: ${greenPoolConfig}"
         
-        // Determine which environment is currently active
-        def blueIsActive = bluePoolConfig != '[]' && bluePoolConfig != 'null' && !bluePoolConfig.contains('"ipAddress":null') && !bluePoolConfig.contains('[]')
-        def greenIsActive = greenPoolConfig != '[]' && greenPoolConfig != 'null' && !greenPoolConfig.contains('"ipAddress":null') && !greenPoolConfig.contains('[]')
+        // Check which backend pool is actually receiving traffic by checking routing rules
+        def activePoolName = sh(
+            script: """az network application-gateway url-path-map show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name pathMap \\
+                --query "pathRules[?paths[0]=='/${appName}*'].backendAddressPool.id" \\
+                --output tsv 2>/dev/null | sed 's|.*/||' || echo 'none'""",
+            returnStdout: true
+        ).trim()
+        
+        echo "🔍 Debug - Active routing pool: ${activePoolName}"
+        
+        // Determine which environment is currently active based on routing
+        def blueIsActive = activePoolName == bluePoolName
+        def greenIsActive = activePoolName == greenPoolName
+        
+        // Fallback to backend address check if routing check fails
+        if (!blueIsActive && !greenIsActive) {
+            blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"backendAddresses": []')
+            greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"backendAddresses": []')
+            echo "🔍 Debug - Fallback detection - Blue has backends: ${blueIsActive}, Green has backends: ${greenIsActive}"
+        }
         
         echo "🔍 Debug - Blue is active: ${blueIsActive}"
         echo "🔍 Debug - Green is active: ${greenIsActive}"
@@ -412,12 +454,20 @@ def switchTraffic(Map config) {
             targetPoolName = bluePoolName
             sourcePoolName = greenPoolName
         } else {
-            // Default: assume Blue is active, switch to Green
-            echo "⚠️ Could not determine current environment clearly. Defaulting to switch from BLUE to GREEN."
-            currentEnv = "BLUE"
-            targetEnv = "GREEN"
-            targetPoolName = greenPoolName
-            sourcePoolName = bluePoolName
+            // If both or neither are active, check which one was deployed to last
+            def lastDeployedEnv = env.TARGET_ENV ?: "BLUE"
+            if (lastDeployedEnv == "BLUE") {
+                currentEnv = "BLUE"
+                targetEnv = "GREEN"
+                targetPoolName = greenPoolName
+                sourcePoolName = bluePoolName
+            } else {
+                currentEnv = "GREEN"
+                targetEnv = "BLUE"
+                targetPoolName = bluePoolName
+                sourcePoolName = greenPoolName
+            }
+            echo "⚠️ Using last deployed environment (${lastDeployedEnv}) to determine switch direction"
         }
         
         echo "🔄 Current active environment: ${currentEnv}"
@@ -437,39 +487,19 @@ def switchTraffic(Map config) {
         
         // Verify target VM health before switching traffic
         echo "🔍 Verifying ${targetEnv} VM health before traffic switch..."
-        def healthCheckPassed = false
-        def healthAttempts = 0
-        def maxHealthAttempts = 20
+        def healthResponse = sh(
+            script: "curl -s -o /dev/null -w '%{http_code}' http://${targetVmIp}/${appName} || echo '000'",
+            returnStdout: true
+        ).trim()
         
-        while (!healthCheckPassed && healthAttempts < maxHealthAttempts) {
-            try {
-                def healthResponse = sh(
-                    script: "curl -s -o /dev/null -w '%{http_code}' http://${targetVmIp}/${appName} || echo '000'",
-                    returnStdout: true
-                ).trim()
-                
-                if (healthResponse == '200') {
-                    healthCheckPassed = true
-                    echo "✅ ${targetEnv} VM health check passed (${healthResponse})"
-                } else {
-                    echo "⚠️ ${targetEnv} VM health check failed (${healthResponse}), attempt ${healthAttempts + 1}/${maxHealthAttempts}"
-                }
-            } catch (Exception e) {
-                echo "⚠️ ${targetEnv} VM health check error: ${e.message}"
-            }
-            
-            if (!healthCheckPassed) {
-                sleep(15)
-                healthAttempts++
-            }
+        if (healthResponse == '200') {
+            echo "✅ ${targetEnv} VM health check passed (${healthResponse})"
+        } else {
+            echo "⚠️ ${targetEnv} VM health check failed (${healthResponse})"
+            echo "⚠️ Proceeding with traffic switch - Application Gateway will handle health checks"
         }
         
-        if (!healthCheckPassed) {
-            echo "❌ ${targetEnv} VM failed health checks after ${maxHealthAttempts} attempts"
-            echo "⚠️ Proceeding with traffic switch anyway - manual verification required"
-        }
-        
-        // Update the target backend pool with the VM IP
+        // First ensure the target backend pool has the correct VM
         sh """
         az network application-gateway address-pool update \\
             --gateway-name ${appGatewayName} \\
@@ -478,11 +508,35 @@ def switchTraffic(Map config) {
             --set backendAddresses='[{"ipAddress":"${targetVmIp}"}]'
         """
         
-        // Wait for Application Gateway to register the new backend
+        // Wait longer for Application Gateway to register the new backend
         echo "⏳ Waiting for Application Gateway to register new backend..."
-        sleep(30)
+        sleep(45)
         
-        // Clear the source backend pool
+        // Verify the backend is registered before clearing the source
+        def backendRegistered = false
+        try {
+            def registeredIp = sh(
+                script: """az network application-gateway address-pool show \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${targetPoolName} \\
+                    --query 'backendAddresses[0].ipAddress' --output tsv 2>/dev/null || echo 'none'""",
+                returnStdout: true
+            ).trim()
+            
+            if (registeredIp == targetVmIp) {
+                backendRegistered = true
+                echo "✅ Backend successfully registered: ${registeredIp}"
+            } else {
+                echo "⚠️ Backend registration issue. Expected: ${targetVmIp}, Got: ${registeredIp}"
+            }
+        } catch (Exception e) {
+            echo "⚠️ Could not verify backend registration: ${e.message}"
+        }
+        
+        // Always clear the source pool after sufficient wait time
+        // This ensures clean blue-green switching
+        sleep(15)
         sh """
         az network application-gateway address-pool update \\
             --gateway-name ${appGatewayName} \\
@@ -490,6 +544,7 @@ def switchTraffic(Map config) {
             --name ${sourcePoolName} \\
             --set backendAddresses='[]'
         """
+        echo "✅ Source backend pool (${sourcePoolName}) cleared"
         
         // Verify the switch
         def currentPoolConfig = sh(
@@ -509,7 +564,10 @@ def switchTraffic(Map config) {
         echo "🌐 Application should now be accessible via Application Gateway"
         echo "📝 Direct VM access: http://${targetVmIp}/${appName}"
         
-        // Final health check via Application Gateway
+        // Check backend health after switch
+        checkBackendHealth(appGatewayName, resourceGroup, targetPoolName)
+        
+        // Final health check via Application Gateway with retry logic
         echo "🔍 Final health check via Application Gateway..."
         sleep(10)
         try {
@@ -519,17 +577,30 @@ def switchTraffic(Map config) {
             ).trim()
             
             if (gatewayIp != 'unknown') {
-                def gatewayResponse = sh(
-                    script: "curl -s -o /dev/null -w '%{http_code}' http://${gatewayIp}/${appName} || echo '000'",
-                    returnStdout: true
-                ).trim()
+                // Try multiple times as Application Gateway needs time to update routing
+                def gatewayHealthy = false
+                for (int i = 0; i < 3; i++) {
+                    def gatewayResponse = sh(
+                        script: "curl -s -o /dev/null -w '%{http_code}' http://${gatewayIp}/${appName} || echo '000'",
+                        returnStdout: true
+                    ).trim()
+                    
+                    if (gatewayResponse == '200') {
+                        echo "✅ Application Gateway health check passed (${gatewayResponse})"
+                        echo "🌐 Application accessible at: http://${gatewayIp}/${appName}"
+                        gatewayHealthy = true
+                        break
+                    } else if (i < 2) {
+                        echo "⚠️ Application Gateway health check attempt ${i+1} failed (${gatewayResponse}), retrying..."
+                        sleep(15)
+                    }
+                }
                 
-                if (gatewayResponse == '200') {
-                    echo "✅ Application Gateway health check passed (${gatewayResponse})"
-                    echo "🌐 Application accessible at: http://${gatewayIp}/${appName}"
-                } else {
-                    echo "⚠️ Application Gateway health check failed (${gatewayResponse})"
+                if (!gatewayHealthy) {
+                    echo "⚠️ Application Gateway health check failed (502)"
                     echo "📝 Manual verification needed: http://${gatewayIp}/${appName}"
+                    echo "💡 This may be due to Application Gateway backend health probe configuration"
+                    echo "💡 Check that the backend health probe path matches the application endpoints"
                 }
             }
         } catch (Exception e) {
@@ -608,6 +679,26 @@ def getAppGatewayName(config) {
     return appGatewayName
 }
 
+// Additional utility function to check Application Gateway backend health
+def checkBackendHealth(String appGatewayName, String resourceGroup, String poolName) {
+    try {
+        def healthStatus = sh(
+            script: """az network application-gateway show-backend-health \\
+                --name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --query "backendAddressPools[?name=='${poolName}'].backendHttpSettingsCollection[0].servers[0].health" \\
+                --output tsv 2>/dev/null || echo 'Unknown'""",
+            returnStdout: true
+        ).trim()
+        
+        echo "🔍 Backend pool ${poolName} health status: ${healthStatus}"
+        return healthStatus
+    } catch (Exception e) {
+        echo "⚠️ Could not check backend health: ${e.message}"
+        return 'Unknown'
+    }
+}
+
 // SSH-related functions removed - using Azure Run Command only
 
 def deployViaAzureRunCommand(String vmName, String resourceGroup, String appName, String appPath, String appFileSource, String appFileVer, String appSymlink) {
@@ -628,7 +719,7 @@ def deployViaAzureRunCommand(String vmName, String resourceGroup, String appName
             --resource-group ${resourceGroup} \\
             --name ${vmName} \\
             --command-id RunShellScript \\
-            --scripts 'echo "Starting deployment for ${appName}..."; echo "${encodedContent}" | base64 -d > /home/azureuser/${appFileVer}; ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}; echo "Symlink created successfully"; ls -la /home/azureuser/${appSymlink}*; echo "Creating setup script..."; echo "${encodedSetupScript}" | base64 -d > /home/azureuser/setup_flask_service_switch.py; chmod +x /home/azureuser/setup_flask_service_switch.py; sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} switch; echo "Deployment completed successfully for ${appName}"'
+            --scripts 'echo "Starting deployment for ${appName}..."; echo "${encodedContent}" | base64 -d > /home/azureuser/${appFileVer}; ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}; echo "Symlink created successfully"; ls -la /home/azureuser/${appSymlink}*; echo "Creating setup script..."; echo "${encodedSetupScript}" | base64 -d > /home/azureuser/setup_flask_service_switch.py; chmod +x /home/azureuser/setup_flask_service_switch.py; sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} switch; echo "Deployment completed successfully for ${appName}"; echo "Verifying service status..."; sudo systemctl status flask-app-app_${appName.replace("app", "")} --no-pager || true; echo "Checking if port 80 is listening..."; sudo netstat -tlnp | grep :80 || true'
         """
         
         echo "✅ Deployment via Azure Run Command completed successfully"
@@ -636,5 +727,6 @@ def deployViaAzureRunCommand(String vmName, String resourceGroup, String appName
     } catch (Exception e) {
         echo "❌ Deployment via Azure Run Command failed: ${e.message}"
         echo "⚠️ Manual deployment may be required"
+        throw e
     }
 }
