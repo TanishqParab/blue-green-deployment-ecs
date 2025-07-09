@@ -181,41 +181,19 @@ def updateApplication(Map config) {
     echo "✅ Green VM IP: ${greenVmIp}"
 
     def appGatewayName = getAppGatewayName(config)
-    def bluePoolName = env.BLUE_POOL_NAME
     def greenPoolName = env.GREEN_POOL_NAME
 
-    echo "🔄 Clearing all backend pool registrations..."
-    try {
-        sh """
-        az network application-gateway address-pool update \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${bluePoolName} \\
-            --set backendAddresses='[]'
-        az network application-gateway address-pool update \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${greenPoolName} \\
-            --set backendAddresses='[]'
-        """
-    } catch (Exception e) {
-        echo "⚠️ Warning during deregistration: ${e.message}"
-        echo "⚠️ Continuing with registration..."
-    }
-    sleep(10)
-
-    echo "✅ Registering VMs to BLUE pools (where routing rules point)..."
-    // Register the appropriate VM to the blue pool based on app
-    def activeVmIp = greenVmIp // Use green VM IP as it has the latest deployment
+    echo "✅ Ensuring VMs are registered in GREEN pools..."
+    // Ensure green VM is in green pool
     sh """
     az network application-gateway address-pool update \\
         --gateway-name ${appGatewayName} \\
         --resource-group ${resourceGroup} \\
-        --name ${bluePoolName} \\
-        --set backendAddresses='[{"ipAddress":"${activeVmIp}"}]'
+        --name ${greenPoolName} \\
+        --set backendAddresses='[{"ipAddress":"${greenVmIp}"}]'
     """
 
-    echo "✅ VMs successfully registered to correct backend pools!"
+    echo "✅ VMs successfully registered in GREEN pools!"
 }
 
 def deployToBlueVM(Map config) {
@@ -475,17 +453,21 @@ def switchTraffic(Map config) {
             echo "⚠️ Could not verify backend registration: ${e.message}"
         }
         
-        // Always clear the source pool after sufficient wait time
-        // This ensures clean blue-green switching
-        sleep(15)
-        sh """
-        az network application-gateway address-pool update \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${sourcePoolName} \\
-            --set backendAddresses='[]'
-        """
-        echo "✅ Source backend pool (${sourcePoolName}) cleared"
+        // Only clear the source pool if it's different from target pool
+        // Don't clear the pool we just deployed to
+        if (sourcePoolName != targetPoolName) {
+            sleep(15)
+            sh """
+            az network application-gateway address-pool update \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${sourcePoolName} \\
+                --set backendAddresses='[]'
+            """
+            echo "✅ Source backend pool (${sourcePoolName}) cleared"
+        } else {
+            echo "📝 Skipping source pool clear - same as target pool (${targetPoolName})"
+        }
         
         // Verify the switch
         def currentPoolConfig = sh(
@@ -504,6 +486,10 @@ def switchTraffic(Map config) {
         echo "✅✅✅ Traffic successfully switched from ${currentEnv} to ${targetEnv} (${targetVmIp})!"
         echo "🌐 Application should now be accessible via Application Gateway"
         echo "📝 Direct VM access: http://${targetVmIp}/${appName}"
+        
+        // Update routing rules to point to the new active pool
+        echo "🔄 Updating routing rules to point to ${targetEnv} pool..."
+        updateRoutingRuleToPool(appGatewayName, resourceGroup, appName, targetPoolName)
         
         // Check backend health after switch
         checkBackendHealth(appGatewayName, resourceGroup, targetPoolName)
@@ -665,6 +651,44 @@ def updateRoutingRulesToGreenPools(Map config) {
     } catch (Exception e) {
         echo "⚠️ Error updating routing rules: ${e.message}"
         echo "💡 You may need to update the routing rules manually in Azure portal"
+    }
+}
+
+// Function to update routing rule for a specific app to point to a specific pool
+def updateRoutingRuleToPool(String appGatewayName, String resourceGroup, String appName, String poolName) {
+    try {
+        def appNum = appName.replace('app', '')
+        
+        echo "📝 Updating routing rule for ${appName} to point to ${poolName}"
+        
+        // Get the pool ID
+        def poolId = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${poolName} \\
+                --query 'id' --output tsv""",
+            returnStdout: true
+        ).trim()
+        
+        if (poolId) {
+            // Update the path rule to point to the specified pool
+            sh """
+            az network application-gateway url-path-map rule update \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --path-map-name pathMap \\
+                --name "rule${appNum}" \\
+                --address-pool ${poolId}
+            """
+            echo "✅ Updated routing rule for ${appName} to point to ${poolName}"
+        } else {
+            echo "⚠️ Could not get pool ID for ${poolName}"
+        }
+        
+    } catch (Exception e) {
+        echo "⚠️ Error updating routing rule: ${e.message}"
+        echo "💡 You may need to update the routing rule manually in Azure portal"
     }
 }
 
