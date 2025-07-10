@@ -284,67 +284,32 @@ def updateApplication(Map config) {
         def resourceGroup = getResourceGroupName(config)
         def registryName = getRegistryName(config)
         
-        // Step 1: Dynamically discover containers
-        def containersJson = sh(
-            script: "az container list --resource-group ${resourceGroup} --output json",
-            returnStdout: true
-        ).trim()
-
-        def containers = parseJsonSafe(containersJson)
-        if (!containers || containers.isEmpty()) {
-            error "❌ No ACI containers found in resource group ${resourceGroup}"
-        }
-
-        def containerNames = containers.collect { it.name }
-        echo "Discovered ACI containers: ${containerNames}"
-
-        // Look for app-specific containers first
-        def blueContainer = containerNames.find { it.toLowerCase() == "${appName.replace('_', '')}${appSuffix}-blue-container" }
-        def greenContainer = containerNames.find { it.toLowerCase() == "${appName.replace('_', '')}${appSuffix}-green-container" }
-        
-        // Fall back to default containers if app-specific ones don't exist
-        if (!blueContainer) {
-            blueContainer = containerNames.find { it.toLowerCase() == "${appName.replace('_', '')}-blue-container" }
-        }
-        if (!greenContainer) {
-            greenContainer = containerNames.find { it.toLowerCase() == "${appName.replace('_', '')}-green-container" }
-        }
-
-        if (!blueContainer || !greenContainer) {
-            error "❌ Could not find both 'blue' and 'green' ACI containers in resource group ${resourceGroup}. Found containers: ${containerNames}"
-        }
+        // Step 1: Use expected container names directly
+        def blueContainer = "${appName.replace('_', '')}-blue-container"
+        def greenContainer = "${appName.replace('_', '')}-green-container"
         
         echo "Using blue container: ${blueContainer}"
         echo "Using green container: ${greenContainer}"
-
-        // Helper to get image tag for a container
-        def getImageTagForContainer = { containerName ->
-            try {
-                def containerInfo = sh(
-                    script: "az container show --name ${containerName} --resource-group ${resourceGroup} --query 'containers[0].image' --output tsv || echo ''",
-                    returnStdout: true
-                )?.trim()
-                
-                if (!containerInfo || containerInfo == "null") {
-                    return ""
-                }
-                
-                def imageTag = containerInfo?.tokenize(':')?.last() ?: ""
-                return imageTag
-            } catch (Exception e) {
-                echo "⚠️ Error getting image tag for container ${containerName}: ${e.message}"
-                return ""
-            }
+        
+        // Verify containers exist
+        def blueExists = sh(
+            script: "az container show --name ${blueContainer} --resource-group ${resourceGroup} --query name --output tsv 2>/dev/null || echo 'MISSING'",
+            returnStdout: true
+        ).trim()
+        
+        def greenExists = sh(
+            script: "az container show --name ${greenContainer} --resource-group ${resourceGroup} --query name --output tsv 2>/dev/null || echo 'MISSING'",
+            returnStdout: true
+        ).trim()
+        
+        if (blueExists == 'MISSING' || greenExists == 'MISSING') {
+            error "❌ Could not find both blue (${blueContainer}) and green (${greenContainer}) containers in resource group ${resourceGroup}"
         }
 
-        def blueImageTag = getImageTagForContainer(blueContainer)
-        def greenImageTag = getImageTagForContainer(greenContainer)
+        echo "Skipping image tag detection to avoid serialization issues"
 
-        echo "Blue container image tag: ${blueImageTag}"
-        echo "Green container image tag: ${greenImageTag}"
-
-        // Determine active environment by checking backend pools (more reliable than image tags)
-        def gatewayName = getAppGatewayName(config)
+        // Determine active environment by checking backend pools
+        def gatewayName = "blue-green-appgw"
         def bluePoolName = "${appName}-blue-pool"
         def greenPoolName = "${appName}-green-pool"
         
@@ -418,14 +383,8 @@ def updateApplication(Map config) {
         def imageTag = "${appName}-latest"
         def imageName = "${appName.replace('_', '')}-image"
         
-        // Smart path handling for Docker directory
-        def tfDir = config.tfWorkingDir ?: env.WORKSPACE
-        def dockerDir = "${tfDir}/modules/azure/aci/scripts"
-        
-        // Handle case where tfDir already includes blue-green-deployment
-        if (tfDir.endsWith('/blue-green-deployment')) {
-            dockerDir = "${tfDir}/modules/azure/aci/scripts"
-        }
+        // Use simple Docker directory path
+        def dockerDir = "./blue-green-deployment/modules/azure/aci/scripts"
         
         sh """
             az acr login --name ${registryName}
@@ -468,7 +427,7 @@ def updateApplication(Map config) {
         
         // Step 5: Ensure health probe exists (but don't update routing rules yet)
         echo "🔍 Creating health probe for ${appName}..."
-        createHealthProbe(gatewayName, resourceGroup, appName)
+        createHealthProbe("blue-green-appgw", resourceGroup, appName)
         
         echo "📝 Note: Routing rules will be updated after traffic switch to point to active environment"
 
