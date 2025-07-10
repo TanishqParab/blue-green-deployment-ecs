@@ -615,6 +615,10 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         
         echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
         
+        // Post-switch validation
+        echo "🔍 Performing post-switch validation..."
+        validateSwitchSuccess(appGatewayName, resourceGroup, appName, containerIp, actualTargetEnv)
+        
     } catch (Exception e) {
         echo "⚠️ Error switching traffic: ${e.message}"
         throw e
@@ -804,5 +808,76 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
     } catch (Exception e) {
         echo "⚠️ Error updating routing rule: ${e.message}"
         echo "💡 Manual configuration may be needed in Azure portal"
+    }
+}
+
+def validateSwitchSuccess(String appGatewayName, String resourceGroup, String appName, String containerIp, String targetEnv) {
+    try {
+        def appSuffix = appName.replace("app_", "")
+        
+        echo "🔍 Step 1: Verifying container health at ${containerIp}:80"
+        def containerHealthy = sh(
+            script: "curl -s -o /dev/null -w '%{http_code}' http://${containerIp}:80 --connect-timeout 10 || echo '000'",
+            returnStdout: true
+        ).trim()
+        
+        if (containerHealthy != '200') {
+            echo "⚠️ Container health check failed: HTTP ${containerHealthy}"
+            echo "🔄 Restarting ${targetEnv.toLowerCase()} container to fix connectivity..."
+            sh "az container restart --name ${appName.replace('_', '')}-${targetEnv.toLowerCase()}-container --resource-group ${resourceGroup}"
+            sleep(30)
+        } else {
+            echo "✅ Container is healthy at ${containerIp}:80"
+        }
+        
+        echo "🔍 Step 2: Waiting for Application Gateway to propagate changes..."
+        sleep(15)
+        
+        echo "🔍 Step 3: Testing Application Gateway routing"
+        def appGatewayIp = sh(
+            script: "az network public-ip show --resource-group ${resourceGroup} --name ${appGatewayName}-ip --query ipAddress --output tsv",
+            returnStdout: true
+        ).trim()
+        
+        def testUrl = appSuffix == "1" ? "http://${appGatewayIp}/" : "http://${appGatewayIp}/app${appSuffix}/"
+        echo "🌐 Testing: ${testUrl}"
+        
+        def appGatewayResponse = sh(
+            script: "curl -s -o /dev/null -w '%{http_code}' '${testUrl}' --connect-timeout 15 || echo '000'",
+            returnStdout: true
+        ).trim()
+        
+        if (appGatewayResponse == '200') {
+            echo "✅ Application Gateway routing is working! HTTP ${appGatewayResponse}"
+        } else {
+            echo "⚠️ Application Gateway returned HTTP ${appGatewayResponse}"
+            echo "🔄 Attempting to fix routing configuration..."
+            
+            // Force refresh Application Gateway configuration
+            sh """
+            az network application-gateway stop --name ${appGatewayName} --resource-group ${resourceGroup}
+            sleep(10)
+            az network application-gateway start --name ${appGatewayName} --resource-group ${resourceGroup}
+            """
+            
+            echo "⏳ Waiting for Application Gateway to restart..."
+            sleep(60)
+            
+            // Test again after restart
+            def finalResponse = sh(
+                script: "curl -s -o /dev/null -w '%{http_code}' '${testUrl}' --connect-timeout 15 || echo '000'",
+                returnStdout: true
+            ).trim()
+            
+            if (finalResponse == '200') {
+                echo "✅ Application Gateway is now working after restart! HTTP ${finalResponse}"
+            } else {
+                echo "❌ Application Gateway still returning HTTP ${finalResponse}"
+                echo "💡 Manual intervention may be required in Azure portal"
+            }
+        }
+        
+    } catch (Exception e) {
+        echo "⚠️ Error during post-switch validation: ${e.message}"
     }
 }
