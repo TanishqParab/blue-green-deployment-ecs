@@ -1,6 +1,6 @@
 # outputs.tf - Terraform outputs for Azure resources
 
-
+/*
 # Azure VM Specific Outputs (commented out for ACI implementation)
 output "resource_group_name" {
   description = "Name of the Azure resource group"
@@ -16,7 +16,7 @@ output "app_gateway_public_ip" {
   description = "Public IP of the Azure Application Gateway"
   value       = try(module.azure_vm_implementation[0].app_gateway_public_ip, null)
 }
-/*
+
 output "blue_vm_ips" {
   description = "Public IPs of blue VMs"
   value       = try(module.azure_vm_implementation[0].blue_vm_ips, {})
