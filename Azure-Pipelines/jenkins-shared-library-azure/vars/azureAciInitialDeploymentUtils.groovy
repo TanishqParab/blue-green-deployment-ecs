@@ -85,14 +85,37 @@ def deployToBlueContainer(Map config) {
         def actualBlueContainerName = blueContainer.name
         echo "Found blue container: ${actualBlueContainerName}"
         
-        // Update container with new image (restart to pull new image)
+        // Update container with new image by recreating it
+        echo "Updating container ${actualBlueContainerName} with new image: ${acrLoginServer}/${appName.replace('_', '')}-image:${appName}-latest"
+        
         sh """
-        az container restart \\
+        # Delete existing container
+        echo "Deleting existing container..."
+        az container delete \\
+            --resource-group ${resourceGroup} \\
             --name ${actualBlueContainerName} \\
-            --resource-group ${resourceGroup}
+            --yes || echo "Container may not exist"
+        
+        # Wait for deletion to complete
+        sleep 10
+        
+        # Create new container with updated image
+        echo "Creating container with new Flask app image..."
+        az container create \\
+            --resource-group ${resourceGroup} \\
+            --name ${actualBlueContainerName} \\
+            --image ${acrLoginServer}/${appName.replace('_', '')}-image:${appName}-latest \\
+            --registry-login-server ${acrLoginServer} \\
+            --registry-username ${registryName} \\
+            --registry-password \$(az acr credential show --name ${registryName} --query passwords[0].value --output tsv) \\
+            --ip-address Public \\
+            --ports 80 \\
+            --cpu 1 \\
+            --memory 1.5 \\
+            --restart-policy Always
         """
         
-        echo "Restarted container with new image"
+        echo "✅ Container recreated with new Flask application image"
         
         // Wait for container to stabilize
         sh "sleep 60"  // Give time for container to restart and pull new image
@@ -131,6 +154,9 @@ def deployToBlueContainer(Map config) {
                 --set backendAddresses='[{"ipAddress":"${containerIp}"}]'
             """
             echo "Registered container IP ${containerIp} to backend pool ${backendPoolName}"
+            
+            // Create health probe for this app
+            createHealthProbe(appGatewayName, resourceGroup, appName)
         }
         
         // Wait for container to be fully ready
@@ -158,6 +184,14 @@ def deployToBlueContainer(Map config) {
         if (!containerReady) {
             echo "⚠️ Container did not become ready within expected time, but continuing..."
         }
+        
+        // Create routing rule for this app
+        echo "🔄 Creating routing rule for ${appName}..."
+        createRoutingRule(appGatewayName, resourceGroup, appName, backendPoolName)
+        
+        // Check health probe status
+        echo "🔍 Checking health probe status..."
+        checkHealthProbeStatus(appGatewayName, resourceGroup, appName)
         
         // Get Application Gateway public IP for display
         def appGatewayIp = sh(
@@ -202,4 +236,136 @@ def getAppGatewayName(config) {
     def appGatewayName = deploymentVars.appGatewayName ?: "blue-green-appgw"
     echo "🌐 Using Application Gateway: ${appGatewayName}"
     return appGatewayName
+}
+
+def createHealthProbe(String appGatewayName, String resourceGroup, String appName) {
+    try {
+        def probeName = "${appName}-health-probe"
+        def httpSettingsName = "${appName}-http-settings"
+        
+        echo "🔍 Creating health probe ${probeName}"
+        
+        // Create health probe
+        sh """
+        az network application-gateway probe create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${probeName} \\
+            --protocol Http \\
+            --host-name-from-http-settings true \\
+            --path / \\
+            --interval 30 \\
+            --timeout 30 \\
+            --threshold 3 || echo "Probe may already exist"
+        """
+        
+        // Create HTTP settings with the probe
+        sh """
+        az network application-gateway http-settings create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${httpSettingsName} \\
+            --port 80 \\
+            --protocol Http \\
+            --timeout 30 \\
+            --probe ${probeName} || echo "HTTP settings may already exist"
+        """
+        
+        echo "✅ Created health probe and HTTP settings for ${appName}"
+        
+    } catch (Exception e) {
+        echo "⚠️ Error creating health probe: ${e.message}"
+    }
+}
+
+def checkHealthProbeStatus(String appGatewayName, String resourceGroup, String appName) {
+    try {
+        def probeName = "${appName}-health-probe"
+        
+        echo "🔍 Checking health probe status for ${probeName}"
+        
+        // Get backend health status
+        sh """
+        echo "Backend health status:"
+        az network application-gateway show-backend-health \\
+            --name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --query "backendAddressPools[?name=='${appName}-blue-pool'].backendHttpSettingsCollection[0].servers[0].health" \\
+            --output table || echo "Could not get health status"
+        """
+        
+        // Test direct connectivity to container
+        def containerIp = sh(
+            script: "az container show --name ${appName.replace('_', '')}-blue-container --resource-group ${resourceGroup} --query ipAddress.ip --output tsv",
+            returnStdout: true
+        ).trim()
+        
+        if (containerIp) {
+            echo "Testing direct connectivity to container ${containerIp}:80"
+            sh "curl -I http://${containerIp}:80 --connect-timeout 10 || echo 'Direct connection failed'"
+        }
+        
+    } catch (Exception e) {
+        echo "⚠️ Error checking health probe: ${e.message}"
+    }
+}
+
+def createRoutingRule(String appGatewayName, String resourceGroup, String appName, String backendPoolName) {
+    try {
+        def appSuffix = appName.replace("app_", "")
+        def pathPattern = appSuffix == "1" ? "/*" : "/app${appSuffix}/*"
+        def ruleName = "path-rule-${appSuffix}"
+        def httpSettingsName = "${appName}-http-settings"
+        
+        echo "📝 Creating path rule ${ruleName} for pattern ${pathPattern}"
+        
+        // Get or create path map
+        def pathMapName = "app-path-map"
+        
+        // Check if path map exists, create if not
+        def pathMapExists = sh(
+            script: "az network application-gateway url-path-map show --gateway-name ${appGatewayName} --resource-group ${resourceGroup} --name ${pathMapName} --query name --output tsv 2>/dev/null || echo ''",
+            returnStdout: true
+        ).trim()
+        
+        if (!pathMapExists) {
+            echo "Creating path map ${pathMapName}"
+            sh """
+            az network application-gateway url-path-map create \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${pathMapName} \\
+                --default-address-pool ${backendPoolName} \\
+                --default-http-settings ${httpSettingsName}
+            """
+        }
+        
+        // Add path rule to the path map
+        sh """
+        az network application-gateway url-path-map rule create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name ${pathMapName} \\
+            --name ${ruleName} \\
+            --paths "${pathPattern}" \\
+            --address-pool ${backendPoolName} \\
+            --http-settings ${httpSettingsName} || echo "Rule may already exist"
+        """
+        
+        // Update the main routing rule to use path-based routing
+        def mainRuleName = "rule1"
+        sh """
+        az network application-gateway rule update \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${mainRuleName} \\
+            --url-path-map ${pathMapName} || echo "Main rule update failed"
+        """
+        
+        echo "✅ Created path-based routing rule for ${appName}"
+        
+    } catch (Exception e) {
+        echo "⚠️ Error creating routing rule: ${e.message}"
+        echo "💡 Manual configuration may be needed in Azure portal"
+    }
 }
