@@ -171,35 +171,58 @@ def prepareRollback(Map config) {
         echo "⚠️ Rollback VM health check failed, but proceeding with rollback"
     }
 
-    // Execute rollback script on the VM using Azure Run Command
-    echo "🛠️ Executing rollback script on ${env.ROLLBACK_VM} via Azure Run Command"
+    // Deploy the latest previous version to rollback VM
+    echo "🔄 Deploying latest previous version to rollback VM: ${env.ROLLBACK_VM}"
     
     try {
-        // Read the setup script content and encode it
-        def setupScriptPath = "blue-green-deployment/modules/azure/vm/scripts/setup_flask_service_switch.py"
-        if (fileExists(setupScriptPath)) {
-            def setupScriptContent = readFile(setupScriptPath)
+        // Get the current app file to deploy the latest version
+        def appFilePath = "blue-green-deployment/modules/azure/vm/scripts/${appName.replace('app', 'app_')}.py"
+        
+        if (fileExists(appFilePath)) {
+            // Read the current app file content and encode it
+            def appContent = readFile(appFilePath)
+            def encodedContent = appContent.bytes.encodeBase64().toString()
+            
+            // Read the setup script content and encode it
+            def setupScriptPath = "blue-green-deployment/modules/azure/vm/scripts/setup_flask_service_switch.py"
+            def setupScriptContent = fileExists(setupScriptPath) ? readFile(setupScriptPath) : ""
             def encodedSetupScript = setupScriptContent.bytes.encodeBase64().toString()
+            
+            // Generate timestamp for version
+            def timestamp = sh(script: "date +%s", returnStdout: true).trim()
+            def appFileVer = "${appName.replace('app', 'app_')}_v${timestamp}.py"
+            def appSymlink = "${appName.replace('app', 'app_')}.py"
             
             sh """
             az vm run-command invoke \\
                 --resource-group ${resourceGroup} \\
                 --name ${env.ROLLBACK_VM} \\
                 --command-id RunShellScript \\
-                --scripts 'echo "Starting rollback for ${appName}..."; echo "${encodedSetupScript}" | base64 -d > /home/azureuser/setup_flask_service_switch.py; chmod +x /home/azureuser/setup_flask_service_switch.py; sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} rollback; echo "Rollback completed for ${appName}"'
+                --scripts 'echo "Starting rollback deployment for ${appName}..."; 
+                echo "${encodedContent}" | base64 -d > /home/azureuser/${appFileVer}; 
+                ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}; 
+                echo "Symlink created for rollback version"; 
+                ls -la /home/azureuser/${appSymlink}*; 
+                echo "Setting up rollback service..."; 
+                echo "${encodedSetupScript}" | base64 -d > /home/azureuser/setup_flask_service_switch.py; 
+                chmod +x /home/azureuser/setup_flask_service_switch.py; 
+                sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} rollback; 
+                echo "Rollback deployment completed for ${appName}"'
             """
+            
+            echo "✅ Latest version deployed to rollback VM successfully"
         } else {
-            echo "⚠️ Rollback script not found: ${setupScriptPath}. Using simple rollback command."
+            echo "⚠️ App file not found: ${appFilePath}. Using simple rollback command."
             sh """
             az vm run-command invoke \\
                 --resource-group ${resourceGroup} \\
                 --name ${env.ROLLBACK_VM} \\
                 --command-id RunShellScript \\
-                --scripts 'echo "Simple rollback for ${appName}..."; sudo systemctl restart flask-app-app_${appName.replace("app", "")} || true; echo "Service restarted"'
+                --scripts 'echo "Simple rollback for ${appName}..."; sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} rollback || sudo systemctl restart flask-app-app_${appName.replace("app", "")} || true; echo "Service restarted"'
             """
         }
     } catch (Exception e) {
-        echo "⚠️ Rollback script execution failed: ${e.message}"
+        echo "⚠️ Rollback deployment failed: ${e.message}"
         echo "Proceeding with traffic switch..."
     }
 
