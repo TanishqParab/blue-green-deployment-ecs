@@ -285,8 +285,8 @@ def executeAzureAciRollback(Map config) {
     
     echo "✅ Traffic successfully switched from ${env.CURRENT_ENV} to ${env.ROLLBACK_ENV}"
     
-    // Update health probe with rollback container IP
-    createHealthProbe(appGatewayName, resourceGroup, appName, rollbackContainerIp)
+    // Create health probe for rollback environment
+    createHealthProbe(appGatewayName, resourceGroup, appName)
     
     // Update routing rules to point to rollback environment
     echo "🔄 Updating routing rules for rollback..."
@@ -385,32 +385,43 @@ def getRegistryName(config) {
     }
 }
 
-def createHealthProbe(String appGatewayName, String resourceGroup, String appName, String containerIp) {
+def createHealthProbe(String appGatewayName, String resourceGroup, String appName) {
     try {
         def probeName = "${appName}-health-probe"
+        def httpSettingsName = "${appName}-http-settings"
         
-        // Test container directly at root path since Flask apps serve at root
-        def healthPath = "/"
+        echo "🔍 Creating health probe ${probeName}"
         
-        echo "🔍 Updating health probe ${probeName} with container IP ${containerIp} and path ${healthPath}"
-        
-        // Update health probe with actual container IP and root path
+        // Create health probe (matching working azureAciUtils.groovy pattern)
         sh """
-        az network application-gateway probe update \\
+        az network application-gateway probe create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
-            --host ${containerIp} \\
-            --path ${healthPath} \\
+            --protocol Http \\
+            --host-name-from-http-settings true \\
+            --path / \\
             --interval 30 \\
             --timeout 30 \\
-            --threshold 3 || echo "Probe update failed"
+            --threshold 3 || echo "Probe may already exist"
         """
         
-        echo "✅ Health probe updated with container IP and root path for ${appName}"
+        // Create HTTP settings with the probe
+        sh """
+        az network application-gateway http-settings create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${httpSettingsName} \\
+            --port 80 \\
+            --protocol Http \\
+            --timeout 30 \\
+            --probe ${probeName} || echo "HTTP settings may already exist"
+        """
+        
+        echo "✅ Created health probe and HTTP settings for ${appName}"
         
     } catch (Exception e) {
-        echo "⚠️ Error updating health probe: ${e.message}"
+        echo "⚠️ Error creating health probe: ${e.message}"
     }
 }
 
