@@ -66,12 +66,23 @@ def registerVMsToBackendPools(Map config) {
     }
     sleep(10)
 
-    echo "📝 VMs are already in GREEN pools. Updating routing rules instead..."
+    echo "📝 Registering VMs to GREEN pools and updating routing rules..."
+    
+    // Register VMs to green pools
+    sh """
+    az network application-gateway address-pool update \\
+        --gateway-name ${appGatewayName} \\
+        --resource-group ${resourceGroup} \\
+        --name ${greenPoolName} \\
+        --set backendAddresses='[{"ipAddress":"${greenVmIp}"}]'
+    """
+    
+    echo "✅ VM registered to green pool: ${greenVmIp}"
     
     // Update routing rules to point to green pools where VMs are
     updateRoutingRulesToGreenPools(config)
     
-    echo "✅ Routing rules updated to point to GREEN pools where VMs are!"
+    echo "✅ VMs registered to GREEN pools and routing rules updated!"
 }
 
 def detectChanges(Map config) {
@@ -206,9 +217,7 @@ def deployToBlueVM(Map config) {
 
     echo "🔍 App: ${appName}, App Gateway: ${appGatewayName}, Blue Pool: ${bluePoolName}, Blue Tag: ${blueVmTag}"
 
-    // First, deploy to both VMs to ensure consistency
-    echo "🔄 Ensuring both VMs have the latest version before traffic switch..."
-    deployToBothVMs(config)
+    // Proper blue-green: deploy only to the inactive environment
 
     def resourceGroup = getResourceGroupName(config)
 
@@ -669,14 +678,19 @@ def updateRoutingRulesToGreenPools(Map config) {
             ).trim()
             
             if (greenPoolId) {
-                // Update the path rule to point to green pool
+                // Update the path rule to point to green pool using the correct syntax
+                def pathMapName = sh(
+                    script: "az network application-gateway url-path-map list --gateway-name ${appGatewayName} --resource-group ${resourceGroup} --query '[0].name' --output tsv 2>/dev/null || echo 'main-path-map'",
+                    returnStdout: true
+                ).trim()
+                
+                def fallbackIndex = appNum == "1" ? "0" : appNum == "2" ? "1" : "2"
                 sh """
-                az network application-gateway url-path-map rule update \\
+                az network application-gateway url-path-map update \\
                     --gateway-name ${appGatewayName} \\
                     --resource-group ${resourceGroup} \\
-                    --path-map-name \$(az network application-gateway url-path-map list --gateway-name ${appGatewayName} --resource-group ${resourceGroup} --query '[0].name' --output tsv 2>/dev/null || echo 'main-path-map') \\
-                    --name "rule${appNum}" \\
-                    --address-pool ${greenPoolId}
+                    --name ${pathMapName} \\
+                    --set "pathRules[${fallbackIndex}].backendAddressPool.id='${greenPoolId}'"
                 """
                 echo "✅ Updated rule for app${appNum} to point to green pool"
             }
