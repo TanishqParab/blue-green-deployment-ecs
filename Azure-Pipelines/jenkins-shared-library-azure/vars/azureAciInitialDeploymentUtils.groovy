@@ -5,7 +5,17 @@ import groovy.json.JsonOutput
 
 @NonCPS
 def initialDeploymentParseJson(String jsonText) {
-    return new JsonSlurper().parseText(jsonText)
+    def parsed = new JsonSlurper().parseText(jsonText)
+    // Convert to serializable list to avoid LazyMap serialization issues
+    def result = []
+    parsed.each { item ->
+        result.add([
+            name: item.name,
+            resourceGroup: item.resourceGroup,
+            location: item.location
+        ])
+    }
+    return result
 }
 
 def deployToBlueContainer(Map config) {
@@ -63,7 +73,7 @@ def deployToBlueContainer(Map config) {
         def containers = initialDeploymentParseJson(containersJson)
         
         // Look for app-specific blue container with exact naming pattern: app1-blue-container
-        def blueContainerName = "${appName.replace('_', '')}${appSuffix}-blue-container"
+        def blueContainerName = "${appName.replace('_', '')}-blue-container"
         def blueContainer = containers.find { it.name.toLowerCase().contains(blueContainerName.toLowerCase()) }
         
         if (!blueContainer) {
@@ -171,22 +181,25 @@ def deployToBlueContainer(Map config) {
 }
 
 def getResourceGroupName(config) {
-    // Use known resource group directly since terraform output is unreliable
-    def resourceGroup = "cloud-pratice-Tanishq.Parab-RG"
+    // Get from azureDeploymentVars
+    def deploymentVars = azureDeploymentVars()
+    def resourceGroup = deploymentVars.resourceGroupName ?: "cloud-pratice-Tanishq.Parab-RG"
     echo "📋 Using resource group: ${resourceGroup}"
     return resourceGroup
 }
 
 def getRegistryName(config) {
-    // Use known registry name directly since terraform output is unreliable
-    def registryName = "bluegreenacrregistry"
+    // Get from azureDeploymentVars
+    def deploymentVars = azureDeploymentVars()
+    def registryName = deploymentVars.registryName ?: "bluegreenacrregistry"
     echo "📦 Using Container Registry: ${registryName}"
     return registryName
 }
 
 def getAppGatewayName(config) {
-    // Use known app gateway name directly since terraform output is unreliable
-    def appGatewayName = "blue-green-appgw"
+    // Get from azureDeploymentVars
+    def deploymentVars = azureDeploymentVars()
+    def appGatewayName = deploymentVars.appGatewayName ?: "blue-green-appgw"
     echo "🌐 Using Application Gateway: ${appGatewayName}"
     return appGatewayName
 }
