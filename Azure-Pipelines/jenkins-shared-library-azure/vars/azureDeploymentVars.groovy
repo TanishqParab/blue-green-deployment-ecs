@@ -5,6 +5,7 @@ def call(String environment = 'default') {
         // Azure Configuration
         azureRegion: 'East US',
         azureCredentialsId: 'azure-credentials',
+        resourceGroupName: 'cloud-pratice-Tanishq.Parab-RG',
         
         // Application Gateway Configuration
         appGatewayName: 'blue-green-appgw',
