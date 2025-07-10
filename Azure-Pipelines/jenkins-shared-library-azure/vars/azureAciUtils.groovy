@@ -339,13 +339,13 @@ def updateApplication(Map config) {
         echo "Green container image tag: ${greenImageTag}"
 
         // Determine active environment by checking backend pools (more reliable than image tags)
-        def appGatewayName = getAppGatewayName(config)
+        def gatewayName = getAppGatewayName(config)
         def bluePoolName = "${appName}-blue-pool"
         def greenPoolName = "${appName}-green-pool"
         
         def bluePoolConfig = sh(
             script: """az network application-gateway address-pool show \\
-                --gateway-name ${appGatewayName} \\
+                --gateway-name ${gatewayName} \\
                 --resource-group ${resourceGroup} \\
                 --name ${bluePoolName} \\
                 --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
@@ -354,7 +354,7 @@ def updateApplication(Map config) {
         
         def greenPoolConfig = sh(
             script: """az network application-gateway address-pool show \\
-                --gateway-name ${appGatewayName} \\
+                --gateway-name ${gatewayName} \\
                 --resource-group ${resourceGroup} \\
                 --name ${greenPoolName} \\
                 --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
@@ -462,9 +462,8 @@ def updateApplication(Map config) {
         echo "✅ Container ${env.IDLE_ENV} is ready"
         
         // Step 5: Ensure health probe exists (but don't update routing rules yet)
-        def appGatewayName = getAppGatewayName(config)
         echo "🔍 Creating health probe for ${appName}..."
-        createHealthProbe(appGatewayName, resourceGroup, appName)
+        createHealthProbe(gatewayName, resourceGroup, appName)
         
         echo "📝 Note: Routing rules will be updated after traffic switch to point to active environment"
 
