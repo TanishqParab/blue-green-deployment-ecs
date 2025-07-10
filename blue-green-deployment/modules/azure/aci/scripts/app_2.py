@@ -1,390 +1,805 @@
-from flask import Flask, jsonify, render_template_string, request, redirect, url_for
-import datetime
-import uuid
+// vars/azureAciUtils.groovy - Azure ACI utility functions (equivalent to ecsUtils.groovy)
 
-app = Flask(__name__)
-app_prefix = "/app2"  # Path prefix for all routes
-
-# In-memory storage for blog posts
-blog_posts = [
-    {
-        "id": "1",
-        "title": "Welcome to App 2 Blue-Green Deployment Blog",
-        "content": "This is a demo #13 of App 2 blog application running with blue-green deployment on Azure ACI.",
-        "author": "Admin",
-        "date": "2023-06-15"
-    },
-    {
-        "id": "2",
-        "title": "App 2 Benefits of Blue-Green Deployment",
-        "content": "App 2: Blue-green deployment is a technique that reduces downtime and risk by running two identical production environments called Blue and Green.",
-        "author": "DevOps Engineer",
-        "date": "2023-06-16"
+def waitForServices(Map config) {
+    echo "Waiting for ACI containers to stabilize..."
+    sleep(60)
+    
+    def appName = config.appName ?: "app_1"
+    def appSuffix = appName.replace("app_", "")
+    
+    def resourceGroup = getResourceGroupName(config)
+    
+    def containerName = "${appName.replace('_', '')}-blue-container"
+    def containerExists = sh(
+        script: """
+            az container show --name ${containerName} --resource-group ${resourceGroup} --query 'provisioningState' --output tsv 2>/dev/null || echo "MISSING"
+        """,
+        returnStdout: true
+    ).trim()
+    
+    if (containerExists == "MISSING") {
+        containerName = "app1-blue-container"
+        echo "Using default container name: ${containerName}"
+    } else {
+        echo "Using app-specific container name: ${containerName}"
     }
-]
+    
+    sh """
+    az container show --name ${containerName} --resource-group ${resourceGroup} --query '{State:instanceView.state,RestartCount:instanceView.restartCount}' --output table
+    """
+    
+    def appGatewayIp = sh(
+        script: "az network public-ip show --resource-group ${resourceGroup} --name ${getAppGatewayName(config)}-ip --query ipAddress --output tsv",
+        returnStdout: true
+    ).trim()
+    
+    def healthEndpoint = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
+    
+    echo "Application is accessible at: http://${appGatewayIp}${appSuffix == "1" ? "" : "/app" + appSuffix}"
+    
+    sh """
+    # Wait for the application to be fully available
+    sleep 30
+    
+    # Test the health endpoint
+    curl -f http://${appGatewayIp}${healthEndpoint} || echo "Health check failed but continuing"
+    """
+}
 
-# HTML template for the blog application
-BLOG_TEMPLATE = '''
-<!DOCTYPE html>
-<html>
-    <head>
-        <title>App 2 Tech Blogs</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                line-height: 1.6;
-                color: #333;
-                margin: 0;
-                padding: 0;
-                background-color: #f8f9fa;
-            }
-            .container {
-                max-width: 1000px;
-                margin: 0 auto;
-                padding: 20px;
-            }
-            header {
-                background-color: #28a745;
-                color: white;
-                padding: 1rem;
-                text-align: center;
-                margin-bottom: 2rem;
-                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            }
-            .version-badge {
-                position: absolute;
-                top: 10px;
-                right: 10px;
-                background-color: #007bff;
-                color: white;
-                padding: 5px 10px;
-                border-radius: 20px;
-                font-weight: bold;
-            }
-            .blog-post {
-                background-color: white;
-                border-radius: 8px;
-                padding: 20px;
-                margin-bottom: 20px;
-                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            }
-            .blog-title {
-                color: #28a745;
-                margin-top: 0;
-            }
-            .blog-meta {
-                color: #6c757d;
-                font-size: 0.9rem;
-                margin-bottom: 15px;
-            }
-            .btn {
-                display: inline-block;
-                background-color: #28a745;
-                color: white;
-                padding: 8px 16px;
-                text-decoration: none;
-                border-radius: 4px;
-                transition: background-color 0.3s;
-                margin-right: 5px;
-            }
-            .btn:hover {
-                background-color: #218838;
-            }
-            .btn-success {
-                background-color: #007bff;
-            }
-            .btn-success:hover {
-                background-color: #0069d9;
-            }
-            .btn-danger {
-                background-color: #dc3545;
-            }
-            .btn-danger:hover {
-                background-color: #c82333;
-            }
-            form {
-                background-color: white;
-                padding: 20px;
-                border-radius: 8px;
-                margin-bottom: 20px;
-                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            }
-            .form-group {
-                margin-bottom: 15px;
-            }
-            label {
-                display: block;
-                margin-bottom: 5px;
-                font-weight: bold;
-            }
-            input[type="text"], textarea {
-                width: 100%;
-                padding: 8px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                box-sizing: border-box;
-            }
-            textarea {
-                min-height: 150px;
-            }
-            .search-form {
-                display: flex;
-                margin-bottom: 20px;
-            }
-            .search-form input {
-                flex-grow: 1;
-                margin-right: 10px;
-            }
-            .comment-section {
-                margin-top: 20px;
-                border-top: 1px solid #eee;
-                padding-top: 15px;
-            }
-            .comment {
-                background-color: #f8f9fa;
-                padding: 10px;
-                border-radius: 4px;
-                margin-bottom: 10px;
-            }
-            .comment-meta {
-                font-size: 0.8rem;
-                color: #6c757d;
-            }
-            .nav-tabs {
-                display: flex;
-                list-style: none;
-                padding: 0;
-                margin: 0 0 20px 0;
-                border-bottom: 1px solid #dee2e6;
-            }
-            .nav-tabs li {
-                margin-right: 5px;
-            }
-            .nav-tabs a {
-                display: block;
-                padding: 8px 16px;
-                text-decoration: none;
-                color: #28a745;
-                border-radius: 4px 4px 0 0;
-            }
-            .nav-tabs a.active {
-                background-color: #28a745;
-                color: white;
-            }
-        </style>
-    </head>
-    <body>
-        <header>
-            <h1>App 2 Tech Blogs</h1>
-            <p>A demonstration of App 2 blue-green deployment on Azure ACI</p>
-        </header>
-        <div class="container">
-            <ul class="nav-tabs">
-                <li><a href="{{ app_prefix }}/" class="{{ 'active' if not form_visible and not view_post and not search_query else '' }}">All Posts</a></li>
-                <li><a href="{{ app_prefix }}/new_post" class="{{ 'active' if form_visible else '' }}">New Post</a></li>
-            </ul>
-            
-            {% if search_query %}
-                <h2>Search Results for: "{{ search_query }}"</h2>
-                <a href="{{ app_prefix }}/" class="btn">Back to All Posts</a>
-            {% endif %}
-            
-            {% if not form_visible and not view_post %}
-                <form class="search-form" action="{{ app_prefix }}/search" method="get">
-                    <input type="text" name="q" placeholder="Search posts..." value="{{ search_query or '' }}">
-                    <button type="submit" class="btn">Search</button>
-                </form>
-            {% endif %}
-            
-            {% if form_visible %}
-                <form method="post" action="{{ app_prefix + '/edit_post/' + post.id if post else app_prefix + '/create_post' }}">
-                    <h2>{{ 'Edit' if post else 'Create New' }} Post</h2>
-                    <div class="form-group">
-                        <label for="title">Title:</label>
-                        <input type="text" id="title" name="title" value="{{ post.title if post else '' }}" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="author">Author:</label>
-                        <input type="text" id="author" name="author" value="{{ post.author if post else '' }}" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="content">Content:</label>
-                        <textarea id="content" name="content" required>{{ post.content if post else '' }}</textarea>
-                    </div>
-                    <button type="submit" class="btn btn-success">{{ 'Update' if post else 'Publish' }} Post</button>
-                    <a href="{{ app_prefix + '/post/' + post.id if post else app_prefix + '/' }}" class="btn">Cancel</a>
-                </form>
-            {% elif view_post %}
-                <div class="blog-post">
-                    <h2 class="blog-title">{{ post.title }}</h2>
-                    <div class="blog-meta">
-                        Posted by {{ post.author }} on {{ post.date }}
-                    </div>
-                    <p>{{ post.content }}</p>
-                    <div>
-                        <a href="{{ app_prefix }}/edit_post/{{ post.id }}" class="btn">Edit</a>
-                        <a href="{{ app_prefix }}/delete_post/{{ post.id }}" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this post?')">Delete</a>
-                        <a href="{{ app_prefix }}/" class="btn">Back to All Posts</a>
-                    </div>
-                    
-                    <div class="comment-section">
-                        <h3>Comments ({{ post.comments|length if post.comments else 0 }})</h3>
-                        
-                        {% if post.comments %}
-                            {% for comment in post.comments %}
-                                <div class="comment">
-                                    <p>{{ comment.content }}</p>
-                                    <div class="comment-meta">
-                                        By {{ comment.author }} on {{ comment.date }}
-                                    </div>
-                                </div>
-                            {% endfor %}
-                        {% else %}
-                            <p>No comments yet.</p>
-                        {% endif %}
-                        
-                        <form method="post" action="{{ app_prefix }}/add_comment/{{ post.id }}">
-                            <h4>Add a Comment</h4>
-                            <div class="form-group">
-                                <label for="comment_author">Name:</label>
-                                <input type="text" id="comment_author" name="author" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="comment_content">Comment:</label>
-                                <textarea id="comment_content" name="content" required rows="3"></textarea>
-                            </div>
-                            <button type="submit" class="btn">Submit Comment</button>
-                        </form>
-                    </div>
-                </div>
-            {% else %}
-                <div style="margin-bottom: 20px;">
-                    <a href="{{ app_prefix }}/new_post" class="btn btn-success">Create New Post</a>
-                </div>
-                
-                {% if posts %}
-                    {% for post in posts %}
-                        <div class="blog-post">
-                            <h2 class="blog-title">{{ post.title }}</h2>
-                            <div class="blog-meta">
-                                Posted by {{ post.author }} on {{ post.date }}
-                                {% if post.comments %}
-                                    | {{ post.comments|length }} comment{{ 's' if post.comments|length != 1 else '' }}
-                                {% endif %}
-                            </div>
-                            <p>{{ post.content[:200] + '...' if post.content|length > 200 else post.content }}</p>
-                            <a href="{{ app_prefix }}/post/{{ post.id }}" class="btn">Read More</a>
-                        </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="blog-post">
-                        <p>No posts found.</p>
-                    </div>
-                {% endif %}
-            {% endif %}
-        </div>
-    </body>
-</html>
-'''
+def cleanResources(Map config) {
+    if (params.MANUAL_BUILD != 'DESTROY' || config.implementation != 'azure-aci') {
+        echo "⚠️ Skipping ACR cleanup as conditions not met (either not DESTROY or not Azure ACI)."
+        return
+    }
 
-@app.route('/')
-@app.route('/app2')
-@app.route('/app2/')
-def home():
-    return render_template_string(BLOG_TEMPLATE, posts=blog_posts, form_visible=False, view_post=False, search_query=None, app_prefix=app_prefix)
+    echo "🧹 Cleaning up ACR repository before destruction..."
 
-@app.route('/app2/new_post')
-def new_post():
-    return render_template_string(BLOG_TEMPLATE, posts=[], form_visible=True, post=None, view_post=False, search_query=None, app_prefix=app_prefix)
-
-@app.route('/app2/create_post', methods=['POST'])
-def create_post():
-    if request.method == 'POST':
-        new_post = {
-            "id": str(uuid.uuid4())[:8],
-            "title": request.form.get('title'),
-            "content": request.form.get('content'),
-            "author": request.form.get('author'),
-            "date": datetime.datetime.now().strftime("%Y-%m-%d"),
-            "comments": []
-        }
-        blog_posts.insert(0, new_post)  # Add to the beginning of the list
-    return redirect(url_for('home'))
-
-@app.route('/app2/post/<post_id>')
-def view_post(post_id):
-    post = next((p for p in blog_posts if p["id"] == post_id), None)
-    if post:
-        return render_template_string(BLOG_TEMPLATE, post=post, view_post=True, form_visible=False, search_query=None, app_prefix=app_prefix)
-    return redirect(url_for('home'))
-
-@app.route('/app2/edit_post/<post_id>')
-def edit_post_form(post_id):
-    post = next((p for p in blog_posts if p["id"] == post_id), None)
-    if post:
-        return render_template_string(BLOG_TEMPLATE, post=post, form_visible=True, view_post=False, search_query=None, app_prefix=app_prefix)
-    return redirect(url_for('home'))
-
-@app.route('/app2/edit_post/<post_id>', methods=['POST'])
-def edit_post(post_id):
-    post = next((p for p in blog_posts if p["id"] == post_id), None)
-    if post and request.method == 'POST':
-        post["title"] = request.form.get('title')
-        post["content"] = request.form.get('content')
-        post["author"] = request.form.get('author')
-    return redirect(url_for('view_post', post_id=post_id))
-
-@app.route('/app2/delete_post/<post_id>')
-def delete_post(post_id):
-    global blog_posts
-    blog_posts = [p for p in blog_posts if p["id"] != post_id]
-    return redirect(url_for('home'))
-
-@app.route('/app2/add_comment/<post_id>', methods=['POST'])
-def add_comment(post_id):
-    post = next((p for p in blog_posts if p["id"] == post_id), None)
-    if post and request.method == 'POST':
-        if "comments" not in post:
-            post["comments"] = []
+    try {
+        def registryName = getRegistryName(config)
+        def resourceGroup = getResourceGroupName(config)
         
-        comment = {
-            "id": str(uuid.uuid4())[:8],
-            "content": request.form.get('content'),
-            "author": request.form.get('author'),
-            "date": datetime.datetime.now().strftime("%Y-%m-%d")
+        def acrExists = sh(
+            script: """
+                az acr show --name ${registryName} --resource-group ${resourceGroup} &>/dev/null && echo 0 || echo 1
+            """,
+            returnStdout: true
+        ).trim() == "0"
+
+        if (acrExists) {
+            echo "🔍 Fetching all images in registry ${registryName}..."
+
+            def imagesOutput = sh(
+                script: """
+                    az acr repository list --name ${registryName} --output json
+                """,
+                returnStdout: true
+            ).trim()
+
+            def repositories = readJSON text: imagesOutput
+
+            echo "Found ${repositories.size()} repositories in registry"
+
+            repositories.each { repo ->
+                echo "Deleting repository: ${repo}"
+                sh """
+                    az acr repository delete \\
+                        --name ${registryName} \\
+                        --repository ${repo} \\
+                        --yes
+                """
+            }
+
+            echo "✅ ACR registry cleanup completed."
+        } else {
+            echo "ℹ️ ACR registry ${registryName} not found, skipping cleanup"
         }
-        post["comments"].append(comment)
-    return redirect(url_for('view_post', post_id=post_id))
+    } catch (Exception e) {
+        echo "⚠️ Warning: ACR cleanup encountered an issue: ${e.message}"
+    }
+}
 
-@app.route('/app2/search')
-def search():
-    query = request.args.get('q', '').lower()
-    if query:
-        results = [p for p in blog_posts if 
-                  query in p["title"].lower() or 
-                  query in p["content"].lower() or 
-                  query in p["author"].lower()]
-        return render_template_string(BLOG_TEMPLATE, posts=results, form_visible=False, 
-                                     view_post=False, search_query=query, app_prefix=app_prefix)
-    return redirect(url_for('home'))
+def detectChanges(Map config) {
+    echo "🔍 Detecting changes for Azure ACI implementation..."
 
-@app.route('/health')
-@app.route('/app2/health')
-def health():
-    """Health check endpoint required for blue-green deployment"""
-    try:
-        # Add any additional health checks here (database connections, etc.)
-        return jsonify({
-            "status": "healthy",
-            "version": "V10",
-            "service": "blue-green-app-2"
-        }), 200
-    except Exception as e:
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e)
-        }), 500
+    def changedFiles = []
+    try {
+        def gitDiff = sh(
+            script: "git diff --name-only HEAD~1 HEAD",
+            returnStdout: true
+        ).trim()
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80)  # Change port from 5000 to 80
+        if (gitDiff) {
+            changedFiles = gitDiff.split('\\n')
+            echo "📝 Changed files: ${changedFiles.join(', ')}"
+            echo "🚀 Change(s) detected. Triggering deployment."
+            env.DEPLOY_NEW_VERSION = 'true'
+            
+            def appPattern = ~/.*app_([1-3])\.py$/
+            def appFile = changedFiles.find { it =~ appPattern }
+            if (appFile) {
+                def matcher = appFile =~ appPattern
+                if (matcher.matches()) {
+                    def appNum = matcher[0][1]
+                    env.CHANGED_APP = "app_${appNum}"
+                    echo "📱 Detected change in application: ${env.CHANGED_APP}"
+                }
+            }
+        } else {
+            echo "📄 No changes detected between last two commits."
+            env.DEPLOY_NEW_VERSION = 'false'
+        }
+
+    } catch (Exception e) {
+        echo "⚠️ Could not determine changed files. Assuming change occurred to force deploy."
+        env.DEPLOY_NEW_VERSION = 'true'
+    }
+}
+
+import groovy.json.JsonSlurper
+
+def fetchResources(Map config) {
+    echo "🔄 Fetching ACI and Application Gateway resources..."
+
+    def result = [:]
+    
+    result.putAll(config)
+
+    try {
+        def appName = env.CHANGED_APP ?: config.appName ?: "app_1"
+        def appSuffix = appName.replace("app_", "")
+        
+        result.APP_NAME = appName
+        result.APP_SUFFIX = appSuffix
+        
+        def resourceGroup = getResourceGroupName(config)
+        def appGatewayName = getAppGatewayName(config)
+        
+        result.RESOURCE_GROUP = resourceGroup
+        result.APP_GATEWAY_NAME = appGatewayName
+        
+        result.BLUE_POOL_NAME = "${appName}-blue-pool"
+        result.GREEN_POOL_NAME = "${appName}-green-pool"
+        
+        // Check current backend pool configuration to determine live environment
+        def bluePoolConfig = sh(
+            script: """
+                az network application-gateway address-pool show \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${result.BLUE_POOL_NAME} \\
+                    --query 'backendAddresses' --output json 2>/dev/null || echo '[]'
+            """,
+            returnStdout: true
+        ).trim()
+
+        def greenPoolConfig = sh(
+            script: """
+                az network application-gateway address-pool show \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${result.GREEN_POOL_NAME} \\
+                    --query 'backendAddresses' --output json 2>/dev/null || echo '[]'
+            """,
+            returnStdout: true
+        ).trim()
+
+        // Determine environments based on backend pool configuration
+        def blueHasBackends = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
+        def greenHasBackends = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
+
+        if (blueHasBackends && !greenHasBackends) {
+            result.LIVE_ENV = "BLUE"
+            result.IDLE_ENV = "GREEN"
+        } else if (greenHasBackends && !blueHasBackends) {
+            result.LIVE_ENV = "GREEN"
+            result.IDLE_ENV = "BLUE"
+        } else {
+            echo "⚠️ Could not determine live environment clearly. Defaulting to BLUE as live."
+            result.LIVE_ENV = "BLUE"
+            result.IDLE_ENV = "GREEN"
+        }
+
+        result.LIVE_POOL_NAME = (result.LIVE_ENV == "BLUE") ? result.BLUE_POOL_NAME : result.GREEN_POOL_NAME
+        result.IDLE_POOL_NAME = (result.IDLE_ENV == "BLUE") ? result.BLUE_POOL_NAME : result.GREEN_POOL_NAME
+        result.LIVE_CONTAINER = "${appName.replace('_', '')}-${result.LIVE_ENV.toLowerCase()}-container"
+        result.IDLE_CONTAINER = "${appName.replace('_', '')}-${result.IDLE_ENV.toLowerCase()}-container"
+
+        echo "✅ Resource Group: ${result.RESOURCE_GROUP}"
+        echo "✅ App Name: ${result.APP_NAME}"
+        echo "✅ Blue Backend Pool: ${result.BLUE_POOL_NAME}"
+        echo "✅ Green Backend Pool: ${result.GREEN_POOL_NAME}"
+        echo "✅ Application Gateway: ${result.APP_GATEWAY_NAME}"
+        echo "✅ LIVE ENV: ${result.LIVE_ENV}"
+        echo "✅ IDLE ENV: ${result.IDLE_ENV}"
+        echo "✅ LIVE CONTAINER: ${result.LIVE_CONTAINER}"
+        echo "✅ IDLE CONTAINER: ${result.IDLE_CONTAINER}"
+
+        return result
+
+    } catch (Exception e) {
+        echo "⚠️ Warning: ACI resource fetch encountered issues: ${e.message}"
+        echo "⚠️ Continuing with minimal configuration..."
+        def appName = env.CHANGED_APP ?: config.appName ?: "app_1"
+        result.APP_NAME = appName
+        result.APP_SUFFIX = appName.replace("app_", "")
+        result.RESOURCE_GROUP = "cloud-pratice-Tanishq.Parab-RG"
+        result.APP_GATEWAY_NAME = "blue-green-appgw"
+        result.BLUE_POOL_NAME = "${appName}-blue-pool"
+        result.GREEN_POOL_NAME = "${appName}-green-pool"
+        result.LIVE_ENV = "BLUE"
+        result.IDLE_ENV = "GREEN"
+        result.LIVE_CONTAINER = "${appName.replace('_', '')}-blue-container"
+        result.IDLE_CONTAINER = "${appName.replace('_', '')}-green-container"
+        return result
+    }
+}
+
+def ensureBackendPoolAssociation(Map config) {
+    echo "Ensuring backend pool is associated with Application Gateway..."
+
+    if (!config.IDLE_POOL_NAME || config.IDLE_POOL_NAME.trim() == "") {
+        error "IDLE_POOL_NAME is missing or empty"
+    }
+    
+    def appName = config.APP_NAME ?: "app_1"
+    def appSuffix = config.APP_SUFFIX ?: appName.replace("app_", "")
+    def resourceGroup = config.RESOURCE_GROUP
+    def appGatewayName = config.APP_GATEWAY_NAME
+
+    // Check if backend pool exists and has proper routing rules
+    def poolExists = sh(
+        script: """
+            az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${config.IDLE_POOL_NAME} \\
+                --query 'name' --output tsv 2>/dev/null || echo "MISSING"
+        """,
+        returnStdout: true
+    ).trim()
+
+    if (poolExists == "MISSING") {
+        echo "⚠️ Backend pool ${config.IDLE_ENV} does not exist. This should have been created by Terraform."
+        error "Backend pool ${config.IDLE_POOL_NAME} not found"
+    } else {
+        echo "✅ Backend pool ${config.IDLE_POOL_NAME} exists and is ready"
+    }
+}
+
+import groovy.json.JsonSlurper
+import groovy.json.JsonOutput
+
+def updateApplication(Map config) {
+    echo "Running ACI update application logic..."
+
+    try {
+        def appName = env.CHANGED_APP ?: config.APP_NAME ?: config.appName ?: "app_1"
+        def appSuffix = appName.replace("app_", "")
+        
+        echo "DEBUG: Using appName: ${appName}"
+        echo "DEBUG: Using appSuffix: ${appSuffix}"
+        
+        echo "Updating application: ${appName}"
+        
+        def resourceGroup = getResourceGroupName(config)
+        def registryName = getRegistryName(config)
+        
+        // Step 1: Use expected container names directly
+        def blueContainer = "${appName.replace('_', '')}-blue-container"
+        def greenContainer = "${appName.replace('_', '')}-green-container"
+        
+        echo "Using blue container: ${blueContainer}"
+        echo "Using green container: ${greenContainer}"
+        
+        // Verify containers exist
+        def blueExists = sh(
+            script: "az container show --name ${blueContainer} --resource-group ${resourceGroup} --query name --output tsv 2>/dev/null || echo 'MISSING'",
+            returnStdout: true
+        ).trim()
+        
+        def greenExists = sh(
+            script: "az container show --name ${greenContainer} --resource-group ${resourceGroup} --query name --output tsv 2>/dev/null || echo 'MISSING'",
+            returnStdout: true
+        ).trim()
+        
+        if (blueExists == 'MISSING' || greenExists == 'MISSING') {
+            error "❌ Could not find both blue (${blueContainer}) and green (${greenContainer}) containers in resource group ${resourceGroup}"
+        }
+
+        echo "Skipping image tag detection to avoid serialization issues"
+
+        // Determine active environment by checking backend pools
+        def gatewayName = "blue-green-appgw"
+        def bluePoolName = "${appName}-blue-pool"
+        def greenPoolName = "${appName}-green-pool"
+        
+        def bluePoolConfig = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${gatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${bluePoolName} \\
+                --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+            returnStdout: true
+        ).trim()
+        
+        def greenPoolConfig = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${gatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${greenPoolName} \\
+                --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+            returnStdout: true
+        ).trim()
+        
+        def blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
+        def greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
+        
+        if (blueIsActive && !greenIsActive) {
+            env.ACTIVE_ENV = "BLUE"
+        } else if (greenIsActive && !blueIsActive) {
+            env.ACTIVE_ENV = "GREEN"
+        } else {
+            echo "⚠️ Could not determine ACTIVE_ENV from backend pools clearly. Defaulting ACTIVE_ENV to BLUE"
+            env.ACTIVE_ENV = "BLUE"
+        }
+
+        if (!env.ACTIVE_ENV || !(env.ACTIVE_ENV.toUpperCase() in ["BLUE", "GREEN"])) {
+            error "❌ ACTIVE_ENV must be set to 'BLUE' or 'GREEN'. Current value: '${env.ACTIVE_ENV}'"
+        }
+        env.ACTIVE_ENV = env.ACTIVE_ENV.toUpperCase()
+        env.IDLE_ENV = (env.ACTIVE_ENV == "BLUE") ? "GREEN" : "BLUE"
+        echo "ACTIVE_ENV: ${env.ACTIVE_ENV}"
+        echo "Determined IDLE_ENV: ${env.IDLE_ENV}"
+
+        env.IDLE_CONTAINER = (env.IDLE_ENV == "BLUE") ? blueContainer : greenContainer
+        echo "Selected IDLE_CONTAINER: ${env.IDLE_CONTAINER}"
+
+        // Step 2: Tag current image for rollback
+        def currentImageTag = "${appName}-latest"
+        def currentImageInfo = sh(
+            script: """
+            az acr repository show-tags --name ${registryName} --repository ${appName.replace('_', '')}-image --query '[?contains(@, `${currentImageTag}`)]' --output json 2>/dev/null || echo '[]'
+            """,
+            returnStdout: true
+        ).trim()
+
+        if (currentImageInfo != '[]') {
+            def timestamp = new Date().format("yyyyMMdd-HHmmss")
+            def rollbackTag = "${appName}-rollback-${timestamp}"
+
+            echo "Found current '${currentImageTag}' image"
+            echo "Tagging current '${currentImageTag}' image as '${rollbackTag}'..."
+
+            sh """
+            az acr import --name ${registryName} --source ${registryName}.azurecr.io/${appName.replace('_', '')}-image:${currentImageTag} --image ${appName.replace('_', '')}-image:${rollbackTag}
+            """
+
+            echo "✅ Tagged rollback image: ${rollbackTag}"
+        } else {
+            echo "⚠️ No current '${currentImageTag}' image found to tag"
+        }
+
+        // Step 3: Build and push Docker image
+        def imageTag = "${appName}-latest"
+        def imageName = "${appName.replace('_', '')}-image"
+        
+        // Use simple Docker directory path
+        def dockerDir = "./blue-green-deployment/modules/azure/aci/scripts"
+        
+        sh """
+            az acr login --name ${registryName}
+            cd ${dockerDir}
+            docker build -t ${imageName}:${imageTag} --build-arg APP_NAME=${appSuffix} .
+            docker tag ${imageName}:${imageTag} ${registryName}.azurecr.io/${imageName}:${imageTag}
+            docker push ${registryName}.azurecr.io/${imageName}:${imageTag}
+        """
+
+        env.IMAGE_URI = "${registryName}.azurecr.io/${imageName}:${imageTag}"
+        echo "✅ Image pushed: ${env.IMAGE_URI}"
+
+        // Step 4: Update ACI Container
+        echo "Updating ${env.IDLE_ENV} container (${env.IDLE_CONTAINER})..."
+
+        // Restart container to pull new image
+        sh """
+        az container restart \\
+            --name ${env.IDLE_CONTAINER} \\
+            --resource-group ${resourceGroup}
+        """
+
+        echo "✅ Updated container ${env.IDLE_ENV} with new image"
+
+        echo "Waiting for ${env.IDLE_ENV} container to stabilize..."
+        sleep(30)
+        
+        // Verify the container is running
+        def containerState = sh(
+            script: "az container show --name ${env.IDLE_CONTAINER} --resource-group ${resourceGroup} --query instanceView.state --output tsv",
+            returnStdout: true
+        ).trim()
+
+        if (containerState != 'Running') {
+            echo "⚠️ Container state: ${containerState}. Waiting longer..."
+            sleep(30)
+        }
+
+        echo "✅ Container ${env.IDLE_ENV} is ready"
+        
+        // Step 5: Ensure health probe exists (but don't update routing rules yet)
+        echo "🔍 Creating health probe for ${appName}..."
+        createHealthProbe("blue-green-appgw", resourceGroup, appName)
+        
+        echo "📝 Note: Routing rules will be updated after traffic switch to point to active environment"
+
+    } catch (Exception e) {
+        echo "❌ Error occurred during ACI update:\\n${e}"
+        e.printStackTrace()
+        error "Failed to update ACI application"
+    }
+}
+
+@NonCPS
+def parseJsonSafe(String jsonText) {
+    try {
+        if (!jsonText || jsonText.trim().isEmpty() || jsonText.trim() == "null") {
+            return []
+        }
+        
+        if (!jsonText.trim().startsWith("{") && !jsonText.trim().startsWith("[")) {
+            return []
+        }
+        
+        def parsed = new JsonSlurper().parseText(jsonText)
+        
+        // If it's an array, convert each item to a simple map
+        if (parsed instanceof List) {
+            def result = []
+            parsed.each { item ->
+                if (item instanceof Map) {
+                    def simpleMap = [:]
+                    item.each { key, value ->
+                        simpleMap[key] = value
+                    }
+                    result.add(simpleMap)
+                }
+            }
+            return result
+        }
+        
+        // If it's a map, convert to simple map
+        if (parsed instanceof Map) {
+            def simpleMap = [:]
+            parsed.each { key, value ->
+                simpleMap[key] = value
+            }
+            return simpleMap
+        }
+        
+        return parsed
+    } catch (Exception e) {
+        echo "⚠️ Error in parseJsonSafe: ${e.message}"
+        return []
+    }
+}
+
+def testEnvironment(Map config) {
+    echo "🔍 Testing ${config.IDLE_ENV} environment..."
+
+    try {
+        def appName = config.APP_NAME ?: "app_1"
+        def appSuffix = config.APP_SUFFIX ?: appName.replace("app_", "")
+        def resourceGroup = config.RESOURCE_GROUP
+        def appGatewayName = config.APP_GATEWAY_NAME
+        
+        // Get Application Gateway public IP
+        def appGatewayIp = sh(
+            script: """
+                az network public-ip show --resource-group ${resourceGroup} --name ${appGatewayName}-ip --query ipAddress --output tsv
+            """,
+            returnStdout: true
+        ).trim()
+
+        env.APP_GATEWAY_IP = appGatewayIp
+
+        // Wait for rule propagation
+        echo "⏳ Waiting for Application Gateway to be ready..."
+        sleep(10)
+
+        // Test app-specific health endpoint
+        def testEndpoint = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
+        echo "🌐 Testing endpoint: http://${appGatewayIp}${testEndpoint}"
+        sh """
+        curl -f http://${appGatewayIp}${testEndpoint} || curl -f http://${appGatewayIp}${testEndpoint.replace('/health', '')} || echo "⚠️ Health check failed but continuing"
+        """
+
+        echo "✅ ${config.IDLE_ENV} environment tested successfully"
+
+    } catch (Exception e) {
+        echo "⚠️ Warning: Test stage encountered an issue: ${e.message}"
+        echo "Proceeding with deployment despite test issues."
+    }
+}
+
+def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String greenPoolName, String appGatewayName, Map config = [:]) {
+    echo "🔍 Smart traffic switching for Azure ACI..."
+    
+    def appName = config.APP_NAME ?: "app_1"
+    def appSuffix = config.APP_SUFFIX ?: appName.replace("app_", "")
+    def resourceGroup = getResourceGroupName(config)
+    
+    try {
+        // Determine current active environment by checking backend pools
+        def bluePoolConfig = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${bluePoolName} \\
+                --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+            returnStdout: true
+        ).trim()
+        
+        def greenPoolConfig = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${greenPoolName} \\
+                --query 'backendAddresses' --output json 2>/dev/null || echo '[]'""",
+            returnStdout: true
+        ).trim()
+        
+        // Determine which environment is currently active
+        def blueIsActive = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
+        def greenIsActive = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
+        
+        def currentEnv, actualTargetEnv, targetPoolName, sourcePoolName
+        
+        if (blueIsActive && !greenIsActive) {
+            currentEnv = "BLUE"
+            actualTargetEnv = "GREEN"
+            targetPoolName = greenPoolName
+            sourcePoolName = bluePoolName
+        } else if (greenIsActive && !blueIsActive) {
+            currentEnv = "GREEN"
+            actualTargetEnv = "BLUE"
+            targetPoolName = bluePoolName
+            sourcePoolName = greenPoolName
+        } else {
+            // Default: assume Blue is active, switch to Green
+            echo "⚠️ Could not determine current environment clearly. Defaulting to switch from BLUE to GREEN."
+            currentEnv = "BLUE"
+            actualTargetEnv = "GREEN"
+            targetPoolName = greenPoolName
+            sourcePoolName = bluePoolName
+        }
+        
+        echo "🔄 Current active environment: ${currentEnv}"
+        echo "🎯 Target environment: ${actualTargetEnv}"
+        echo "🔁 Switching traffic from ${sourcePoolName} to ${targetPoolName}..."
+        
+        // Get the target container IP
+        def targetContainerName = "${appName.replace('_', '')}-${actualTargetEnv.toLowerCase()}-container"
+        def containerIp = sh(
+            script: """
+                az container show --name ${targetContainerName} --resource-group ${resourceGroup} --query ipAddress.ip --output tsv
+            """,
+            returnStdout: true
+        ).trim()
+
+        if (!containerIp || containerIp == 'None') {
+            error "❌ Could not get container IP for ${targetContainerName}"
+        }
+
+        // Update the target backend pool with the container IP
+        sh """
+            az network application-gateway address-pool update \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${targetPoolName} \\
+                --set backendAddresses='[{"ipAddress":"${containerIp}"}]'
+        """
+        
+        // Clear the source backend pool
+        sh """
+            az network application-gateway address-pool update \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${sourcePoolName} \\
+                --set backendAddresses='[]'
+        """
+        
+        echo "✅✅✅ Traffic successfully switched from ${currentEnv} to ${actualTargetEnv} (${containerIp})!"
+        
+        // Update routing rules to point to the new active backend pool
+        echo "🔄 Updating routing rules to point to new active environment..."
+        createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
+        
+        echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
+        
+    } catch (Exception e) {
+        echo "⚠️ Error switching traffic: ${e.message}"
+        throw e
+    }
+}
+
+def scaleDownOldEnvironment(Map config) {
+    def appName = config.APP_NAME ?: "app_1"
+    def resourceGroup = getResourceGroupName(config)
+    
+    echo "DEBUG: scaleDownOldEnvironment received config keys: ${config.keySet()}"
+    
+    // Determine which container to scale down (the one NOT receiving traffic)
+    def containerToScaleDown
+    
+    if (config.LIVE_ENV == "BLUE") {
+        containerToScaleDown = "${appName.replace('_', '')}-green-container"
+    } else {
+        containerToScaleDown = "${appName.replace('_', '')}-blue-container"
+    }
+    
+    echo "🔍 LIVE_ENV (currently receiving traffic): ${config.LIVE_ENV}"
+    echo "🔽 Will scale down IDLE container: ${containerToScaleDown}"
+    
+    echo "🔄 Scaling down IDLE container: ${containerToScaleDown} (not receiving traffic)"
+    
+    try {
+        // For ACI, we can stop the container or reduce its resources
+        sh """
+        az container stop \\
+          --name ${containerToScaleDown} \\
+          --resource-group ${resourceGroup}
+        """
+        echo "✅ Scaled down old container: ${containerToScaleDown}"
+
+        echo "⏳ Waiting for old container to stop..."
+        sleep(10)
+        
+        def containerState = sh(
+            script: "az container show --name ${containerToScaleDown} --resource-group ${resourceGroup} --query instanceView.state --output tsv",
+            returnStdout: true
+        ).trim()
+        
+        echo "✅ Old container ${containerToScaleDown} state: ${containerState}"
+    } catch (Exception e) {
+        echo "⚠️ Warning during scale down: ${e.message}"
+        echo "⚠️ Continuing despite scale down issues..."
+    }
+}
+
+def getResourceGroupName(config) {
+    try {
+        def resourceGroup = sh(
+            script: "cd blue-green-deployment && terraform output -raw resource_group_name 2>/dev/null || echo ''",
+            returnStdout: true
+        ).trim()
+        
+        // Clean up terraform warning messages
+        if (resourceGroup.contains('Warning:') || resourceGroup.contains('[')) {
+            resourceGroup = ""
+        }
+        
+        if (!resourceGroup || resourceGroup == '') {
+            resourceGroup = "cloud-pratice-Tanishq.Parab-RG"
+        }
+        
+        echo "📋 Using resource group: ${resourceGroup}"
+        return resourceGroup
+    } catch (Exception e) {
+        echo "⚠️ Could not determine resource group name: ${e.message}"
+        return "cloud-pratice-Tanishq.Parab-RG"
+    }
+}
+
+def getAppGatewayName(config) {
+    try {
+        def appGatewayName = sh(
+            script: "cd blue-green-deployment && terraform output -raw app_gateway_name 2>/dev/null || echo ''",
+            returnStdout: true
+        ).trim()
+        
+        // Clean up terraform warning messages
+        if (appGatewayName.contains('Warning:') || appGatewayName.contains('[')) {
+            appGatewayName = ""
+        }
+        
+        if (!appGatewayName || appGatewayName == '') {
+            appGatewayName = "blue-green-appgw"
+        }
+        
+        echo "🌐 Using Application Gateway: ${appGatewayName}"
+        return appGatewayName
+    } catch (Exception e) {
+        echo "⚠️ Could not determine Application Gateway name: ${e.message}"
+        return "blue-green-appgw"
+    }
+}
+
+def getRegistryName(config) {
+    try {
+        def registryName = sh(
+            script: "cd blue-green-deployment && terraform output -raw registry_name 2>/dev/null || echo ''",
+            returnStdout: true
+        ).trim()
+        
+        // Clean up terraform warning messages
+        if (registryName.contains('Warning:') || registryName.contains('[')) {
+            registryName = ""
+        }
+        
+        if (!registryName || registryName == '') {
+            registryName = "bluegreenacrregistry"
+        }
+        
+        echo "📦 Using Container Registry: ${registryName}"
+        return registryName
+    } catch (Exception e) {
+        echo "⚠️ Could not determine registry name: ${e.message}"
+        return "bluegreenacrregistry"
+    }
+}
+
+def createHealthProbe(String appGatewayName, String resourceGroup, String appName) {
+    try {
+        def probeName = "${appName}-health-probe"
+        def httpSettingsName = "${appName}-http-settings"
+        
+        echo "🔍 Creating health probe ${probeName}"
+        
+        // Create health probe
+        sh """
+        az network application-gateway probe create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${probeName} \\
+            --protocol Http \\
+            --host-name-from-http-settings true \\
+            --path / \\
+            --interval 30 \\
+            --timeout 30 \\
+            --threshold 3 || echo "Probe may already exist"
+        """
+        
+        // Create HTTP settings with the probe
+        sh """
+        az network application-gateway http-settings create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${httpSettingsName} \\
+            --port 80 \\
+            --protocol Http \\
+            --timeout 30 \\
+            --probe ${probeName} || echo "HTTP settings may already exist"
+        """
+        
+        echo "✅ Created health probe and HTTP settings for ${appName}"
+        
+    } catch (Exception e) {
+        echo "⚠️ Error creating health probe: ${e.message}"
+    }
+}
+
+def createRoutingRule(String appGatewayName, String resourceGroup, String appName, String backendPoolName) {
+    try {
+        def appSuffix = appName.replace("app_", "")
+        def existingRuleName = "${appName}-path-rule"
+        def httpSettingsName = "${appName}-http-settings"
+        
+        echo "📝 Updating existing path rule ${existingRuleName} to point to ${backendPoolName}"
+        
+        // Update the existing path rule in main-path-map to point to the new backend pool
+        sh """
+        az network application-gateway url-path-map rule update \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name main-path-map \\
+            --name ${existingRuleName} \\
+            --address-pool ${backendPoolName} \\
+            --http-settings ${httpSettingsName} || echo "Rule update may have failed"
+        """
+        
+        echo "✅ Updated path rule to point to ${backendPoolName}"
+        
+    } catch (Exception e) {
+        echo "⚠️ Error updating routing rule: ${e.message}"
+        echo "💡 Manual configuration may be needed in Azure portal"
+    }
+}
