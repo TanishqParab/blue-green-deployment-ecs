@@ -388,23 +388,25 @@ def getRegistryName(config) {
 def updateHealthProbeForRollback(String appGatewayName, String resourceGroup, String appName, String containerIp) {
     try {
         def probeName = "${appName}-health-probe"
+        def appSuffix = appName.replace("app_", "")
+        def healthPath = "/app${appSuffix}/health"
         
-        echo "🔍 Updating health probe ${probeName} for rollback container ${containerIp}"
+        echo "🔍 Updating health probe ${probeName} for rollback container ${containerIp} with path ${healthPath}"
         
-        // Update probe with actual container IP and root path
+        // Update probe with actual container IP and correct Flask app health path
         sh """
         az network application-gateway probe update \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
             --host ${containerIp} \\
-            --path / \\
+            --path ${healthPath} \\
             --interval 30 \\
             --timeout 30 \\
             --threshold 3
         """
         
-        echo "✅ Health probe updated for rollback container ${containerIp}"
+        echo "✅ Health probe updated for rollback container ${containerIp} with path ${healthPath}"
         
     } catch (Exception e) {
         echo "⚠️ Error updating health probe: ${e.message}"
