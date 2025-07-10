@@ -780,59 +780,26 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
 def createRoutingRule(String appGatewayName, String resourceGroup, String appName, String backendPoolName) {
     try {
         def appSuffix = appName.replace("app_", "")
-        def pathPattern = appSuffix == "1" ? "/*" : "/app${appSuffix}/*"
-        def ruleName = "path-rule-${appSuffix}"
+        def existingRuleName = "${appName}-path-rule"
         def httpSettingsName = "${appName}-http-settings"
         
-        echo "📝 Creating path rule ${ruleName} for pattern ${pathPattern}"
+        echo "📝 Updating existing path rule ${existingRuleName} to point to ${backendPoolName}"
         
-        // Get or create path map
-        def pathMapName = "app-path-map"
-        
-        // Check if path map exists, create if not
-        def pathMapExists = sh(
-            script: "az network application-gateway url-path-map show --gateway-name ${appGatewayName} --resource-group ${resourceGroup} --name ${pathMapName} --query name --output tsv 2>/dev/null || echo ''",
-            returnStdout: true
-        ).trim()
-        
-        if (!pathMapExists) {
-            echo "Creating path map ${pathMapName}"
-            sh """
-            az network application-gateway url-path-map create \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name ${pathMapName} \\
-                --default-address-pool ${backendPoolName} \\
-                --default-http-settings ${httpSettingsName}
-            """
-        }
-        
-        // Add path rule to the path map
+        // Update the existing path rule in main-path-map to point to the new backend pool
         sh """
-        az network application-gateway url-path-map rule create \\
+        az network application-gateway url-path-map rule update \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
-            --path-map-name ${pathMapName} \\
-            --name ${ruleName} \\
-            --paths "${pathPattern}" \\
+            --path-map-name main-path-map \\
+            --name ${existingRuleName} \\
             --address-pool ${backendPoolName} \\
-            --http-settings ${httpSettingsName} || echo "Rule may already exist"
+            --http-settings ${httpSettingsName} || echo "Rule update may have failed"
         """
         
-        // Update the main routing rule to use path-based routing
-        def mainRuleName = "rule1"
-        sh """
-        az network application-gateway rule update \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${mainRuleName} \\
-            --url-path-map ${pathMapName} || echo "Main rule update failed"
-        """
-        
-        echo "✅ Created path-based routing rule for ${appName}"
+        echo "✅ Updated path rule to point to ${backendPoolName}"
         
     } catch (Exception e) {
-        echo "⚠️ Error creating routing rule: ${e.message}"
+        echo "⚠️ Error updating routing rule: ${e.message}"
         echo "💡 Manual configuration may be needed in Azure portal"
     }
 }
