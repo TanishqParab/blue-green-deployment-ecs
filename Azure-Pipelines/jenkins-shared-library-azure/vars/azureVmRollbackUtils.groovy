@@ -59,27 +59,20 @@ def fetchResources(Map config) {
 def prepareRollback(Map config) {
     echo "🛠️ Initiating Azure VM rollback process..."
 
-    def appName = config.appName ?: env.APP_NAME ?: "app2"  // Use multiple fallbacks
+    def appName = config.appName ?: env.APP_NAME ?: "app2"
     echo "🔍 Using app name for rollback: ${appName}"
 
     def blueVmTag = "${appName}-blue-vm"
     def greenVmTag = "${appName}-green-vm"
     def resourceGroup = env.RESOURCE_GROUP
     def appGatewayName = env.APP_GATEWAY_NAME
+    def appNum = appName.replace('app', '')
 
     echo "🔍 Target VM tags: ${blueVmTag} and ${greenVmTag}"
 
-    // Determine current backend pool routing to find which VM to rollback to
-    def currentPoolConfig = sh(
-        script: """
-            az network application-gateway address-pool show \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name ${env.BLUE_POOL_NAME} \\
-                --query 'backendAddresses[0].ipAddress' --output tsv 2>/dev/null || echo 'None'
-        """,
-        returnStdout: true
-    ).trim()
+    // Determine current active pool by checking URL path map rules
+    def currentActivePool = getCurrentActivePool(appGatewayName, resourceGroup, appName)
+    echo "🔍 Current active pool: ${currentActivePool}"
 
     // Get VM IPs
     def blueVmIp = sh(
@@ -96,20 +89,22 @@ def prepareRollback(Map config) {
         error "❌ No VMs found for rollback"
     }
 
-    // Determine rollback target (switch to the VM not currently receiving traffic)
-    if (currentPoolConfig == blueVmIp) {
-        // Currently on Blue, rollback to Green
+    // Determine rollback target based on current active pool
+    if (currentActivePool.contains('blue')) {
         env.CURRENT_ENV = "BLUE"
         env.CURRENT_VM = blueVmTag
+        env.CURRENT_POOL = "app_${appNum}-blue-pool"
         env.ROLLBACK_ENV = "GREEN"
         env.ROLLBACK_VM = greenVmTag
+        env.ROLLBACK_POOL = "app_${appNum}-green-pool"
         env.ROLLBACK_VM_IP = greenVmIp
     } else {
-        // Currently on Green or unknown, rollback to Blue
         env.CURRENT_ENV = "GREEN"
         env.CURRENT_VM = greenVmTag
+        env.CURRENT_POOL = "app_${appNum}-green-pool"
         env.ROLLBACK_ENV = "BLUE"
         env.ROLLBACK_VM = blueVmTag
+        env.ROLLBACK_POOL = "app_${appNum}-blue-pool"
         env.ROLLBACK_VM_IP = blueVmIp
     }
 
@@ -117,8 +112,8 @@ def prepareRollback(Map config) {
         error "❌ Rollback VM ${env.ROLLBACK_VM} not found or not running"
     }
 
-    echo "Current environment: ${env.CURRENT_ENV}"
-    echo "Rollback target: ${env.ROLLBACK_ENV} (${env.ROLLBACK_VM} - ${env.ROLLBACK_VM_IP})"
+    echo "Current environment: ${env.CURRENT_ENV} (${env.CURRENT_POOL})"
+    echo "Rollback target: ${env.ROLLBACK_ENV} (${env.ROLLBACK_VM} - ${env.ROLLBACK_POOL})"
 
     // Ensure rollback VM is running
     def rollbackVmState = sh(
@@ -171,60 +166,9 @@ def prepareRollback(Map config) {
         echo "⚠️ Rollback VM health check failed, but proceeding with rollback"
     }
 
-    // Deploy the latest previous version to rollback VM
-    echo "🔄 Deploying latest previous version to rollback VM: ${env.ROLLBACK_VM}"
-    
-    try {
-        // Get the current app file to deploy the latest version
-        def appFilePath = "blue-green-deployment/modules/azure/vm/scripts/${appName.replace('app', 'app_')}.py"
-        
-        if (fileExists(appFilePath)) {
-            // Read the current app file content and encode it
-            def appContent = readFile(appFilePath)
-            def encodedContent = appContent.bytes.encodeBase64().toString()
-            
-            // Read the setup script content and encode it
-            def setupScriptPath = "blue-green-deployment/modules/azure/vm/scripts/setup_flask_service_switch.py"
-            def setupScriptContent = fileExists(setupScriptPath) ? readFile(setupScriptPath) : ""
-            def encodedSetupScript = setupScriptContent.bytes.encodeBase64().toString()
-            
-            // Generate timestamp for version
-            def timestamp = sh(script: "date +%s", returnStdout: true).trim()
-            def appFileVer = "${appName.replace('app', 'app_')}_v${timestamp}.py"
-            def appSymlink = "${appName.replace('app', 'app_')}.py"
-            
-            sh """
-            az vm run-command invoke \\
-                --resource-group ${resourceGroup} \\
-                --name ${env.ROLLBACK_VM} \\
-                --command-id RunShellScript \\
-                --scripts 'echo "Starting rollback deployment for ${appName}..."; 
-                echo "${encodedContent}" | base64 -d > /home/azureuser/${appFileVer}; 
-                ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}; 
-                echo "Symlink created for rollback version"; 
-                ls -la /home/azureuser/${appSymlink}*; 
-                echo "Setting up rollback service..."; 
-                echo "${encodedSetupScript}" | base64 -d > /home/azureuser/setup_flask_service_switch.py; 
-                chmod +x /home/azureuser/setup_flask_service_switch.py; 
-                sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} rollback; 
-                echo "Rollback deployment completed for ${appName}"'
-            """
-            
-            echo "✅ Latest version deployed to rollback VM successfully"
-        } else {
-            echo "⚠️ App file not found: ${appFilePath}. Using simple rollback command."
-            sh """
-            az vm run-command invoke \\
-                --resource-group ${resourceGroup} \\
-                --name ${env.ROLLBACK_VM} \\
-                --command-id RunShellScript \\
-                --scripts 'echo "Simple rollback for ${appName}..."; sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} rollback || sudo systemctl restart flask-app-app_${appName.replace("app", "")} || true; echo "Service restarted"'
-            """
-        }
-    } catch (Exception e) {
-        echo "⚠️ Rollback deployment failed: ${e.message}"
-        echo "Proceeding with traffic switch..."
-    }
+    // Deploy previous version to rollback VM
+    echo "🔄 Deploying previous version to rollback VM: ${env.ROLLBACK_VM}"
+    deployPreviousVersionToVM(resourceGroup, env.ROLLBACK_VM, appName)
 
     echo "✅ Rollback preparation completed for ${appName}"
 }
@@ -235,6 +179,7 @@ def executeAzureVmRollback(Map config) {
     def resourceGroup = env.RESOURCE_GROUP
     def appGatewayName = env.APP_GATEWAY_NAME
     def rollbackVm = env.ROLLBACK_VM
+    def rollbackPool = env.ROLLBACK_POOL
     def appName = config.appName ?: ""
     
     // Start rollback VM if not running
@@ -247,7 +192,6 @@ def executeAzureVmRollback(Map config) {
         echo "Starting rollback VM: ${rollbackVm}"
         sh "az vm start -g ${resourceGroup} -n ${rollbackVm}"
         
-        // Wait for VM to be ready
         echo "⏳ Waiting for VM to be ready..."
         sleep(30)
     }
@@ -264,33 +208,28 @@ def executeAzureVmRollback(Map config) {
     
     echo "Rollback VM IP: ${rollbackVmIp}"
     
-    // Update backend pool to point to rollback VM
-    def backendPoolName = appName ? "app_${appName.replace('app', '')}-blue-pool" : "app_1-blue-pool"
-    
+    // Update backend pool with rollback VM IP
+    echo "📝 Updating backend pool ${rollbackPool} with rollback VM IP"
     sh """
     az network application-gateway address-pool update \\
         --gateway-name ${appGatewayName} \\
         --resource-group ${resourceGroup} \\
-        --name ${backendPoolName} \\
+        --name ${rollbackPool} \\
         --set backendAddresses='[{"ipAddress":"${rollbackVmIp}"}]'
     """
     
-    echo "✅ Traffic switched to rollback VM: ${rollbackVm} (${rollbackVmIp})"
-    
-    // Optionally stop the current VM to save costs
-    def currentVm = env.CURRENT_VM
-    if (currentVm && currentVm != 'null' && currentVm != '') {
-        echo "Stopping current VM to save costs: ${currentVm}"
-        try {
-            sh "az vm deallocate -g ${resourceGroup} -n ${currentVm}"
-            echo "✅ Current VM ${currentVm} stopped successfully"
-        } catch (Exception e) {
-            echo "⚠️ Failed to stop current VM ${currentVm}: ${e.message}"
-        }
-    } else {
-        echo "⚠️ Current VM not identified, skipping VM cleanup"
+    // Update URL path map routing rule to point to rollback pool
+    echo "🔄 Updating routing rule to point to rollback pool: ${rollbackPool}"
+    try {
+        updateRoutingRuleToPool(appGatewayName, resourceGroup, appName, rollbackPool)
+        echo "✅ Routing rule updated successfully"
+    } catch (Exception e) {
+        echo "⚠️ Failed to update routing rule: ${e.message}"
+        echo "💡 Manual update may be required in Azure portal"
     }
     
+    echo "✅ Traffic switched to rollback VM: ${rollbackVm} (${rollbackVmIp})"
+    echo "ℹ️ Both VMs remain running for future deployments"
     echo "✅ Azure VM rollback completed successfully!"
 }
 
@@ -306,4 +245,176 @@ def getAppGatewayName(config) {
     def appGatewayName = "blue-green-appgw"
     echo "🌐 Using Application Gateway: ${appGatewayName}"
     return appGatewayName
+}
+
+// Helper function to determine current active pool from URL path map
+def getCurrentActivePool(String appGatewayName, String resourceGroup, String appName) {
+    try {
+        def appNum = appName.replace('app', '')
+        
+        // Get the path map name
+        def pathMapName = sh(
+            script: """az network application-gateway url-path-map list \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --query '[0].name' --output tsv""",
+            returnStdout: true
+        ).trim()
+        
+        // Get current backend pool ID for this app's rule
+        def currentPoolId = sh(
+            script: """az network application-gateway url-path-map show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${pathMapName} \\
+                --query "pathRules[?contains(paths[0], '/app${appNum}')].backendAddressPool.id | [0]" \\
+                --output tsv 2>/dev/null || echo 'None'""",
+            returnStdout: true
+        ).trim()
+        
+        if (currentPoolId && currentPoolId != 'None') {
+            // Extract pool name from ID
+            def poolName = currentPoolId.split('/')[-1]
+            return poolName
+        } else {
+            echo "⚠️ Could not determine current active pool, defaulting to blue"
+            return "app_${appNum}-blue-pool"
+        }
+    } catch (Exception e) {
+        echo "⚠️ Error determining current active pool: ${e.message}"
+        return "app_${appName.replace('app', '')}-blue-pool"
+    }
+}
+
+// Helper function to deploy previous version to VM
+def deployPreviousVersionToVM(String resourceGroup, String vmName, String appName) {
+    try {
+        // Look for backup/previous version file
+        def appBaseName = appName.replace('app', 'app_')
+        def backupFilePath = "blue-green-deployment/modules/azure/vm/scripts/${appBaseName}_backup.py"
+        def currentFilePath = "blue-green-deployment/modules/azure/vm/scripts/${appBaseName}.py"
+        
+        def deployContent = ""
+        if (fileExists(backupFilePath)) {
+            echo "📦 Found backup version, deploying previous version"
+            deployContent = readFile(backupFilePath)
+        } else if (fileExists(currentFilePath)) {
+            echo "⚠️ No backup found, deploying current version as fallback"
+            deployContent = readFile(currentFilePath)
+        } else {
+            echo "❌ No app files found for deployment"
+            return
+        }
+        
+        def encodedContent = deployContent.bytes.encodeBase64().toString()
+        
+        // Read setup script
+        def setupScriptPath = "blue-green-deployment/modules/azure/vm/scripts/setup_flask_service_switch.py"
+        def setupScriptContent = fileExists(setupScriptPath) ? readFile(setupScriptPath) : ""
+        def encodedSetupScript = setupScriptContent.bytes.encodeBase64().toString()
+        
+        def timestamp = sh(script: "date +%s", returnStdout: true).trim()
+        def appFileVer = "${appBaseName}_rollback_v${timestamp}.py"
+        def appSymlink = "${appBaseName}.py"
+        
+        sh """
+        az vm run-command invoke \\
+            --resource-group ${resourceGroup} \\
+            --name ${vmName} \\
+            --command-id RunShellScript \\
+            --scripts 'echo "Starting rollback deployment for ${appName}..."; 
+            echo "${encodedContent}" | base64 -d > /home/azureuser/${appFileVer}; 
+            ln -sf /home/azureuser/${appFileVer} /home/azureuser/${appSymlink}; 
+            echo "Rollback version symlink created"; 
+            ls -la /home/azureuser/${appSymlink}*; 
+            echo "Setting up rollback service..."; 
+            echo "${encodedSetupScript}" | base64 -d > /home/azureuser/setup_flask_service_switch.py; 
+            chmod +x /home/azureuser/setup_flask_service_switch.py; 
+            sudo python3 /home/azureuser/setup_flask_service_switch.py ${appName} rollback; 
+            echo "Rollback deployment completed for ${appName}"'
+        """
+        
+        echo "✅ Previous version deployed to rollback VM successfully"
+    } catch (Exception e) {
+        echo "⚠️ Rollback deployment failed: ${e.message}"
+        echo "Proceeding with traffic switch using existing service..."
+    }
+}
+
+// Function to use same routing mechanism as deployment
+def updateRoutingRuleToPool(String appGatewayName, String resourceGroup, String appName, String poolName) {
+    try {
+        def appNum = appName.replace('app', '')
+        
+        echo "📝 Updating routing rule for ${appName} to point to ${poolName}"
+        
+        // Get the pool ID
+        def poolId = sh(
+            script: """az network application-gateway address-pool show \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${poolName} \\
+                --query 'id' --output tsv""",
+            returnStdout: true
+        ).trim()
+        
+        if (poolId) {
+            // Get the correct path map name first
+            def pathMapName = sh(
+                script: """az network application-gateway url-path-map list \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --query '[0].name' --output tsv""",
+                returnStdout: true
+            ).trim()
+            
+            // Find the correct rule index by matching the path pattern
+            def ruleIndex = sh(
+                script: """az network application-gateway url-path-map show \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${pathMapName} \\
+                    --query "pathRules[?contains(paths[0], '/app${appNum}')] | [0]" \\
+                    --output json | jq -r 'if . == null then "not_found" else "found" end' 2>/dev/null || echo 'not_found'""",
+                returnStdout: true
+            ).trim()
+            
+            if (ruleIndex != 'not_found') {
+                // Find the actual index of the rule that handles /app${appNum} paths
+                sh """
+                RULE_INDEX=\$(az network application-gateway url-path-map show \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${pathMapName} \\
+                    --query "pathRules | to_entries | map(select(.value.paths[0] | contains('/app${appNum}'))) | [0].key" \\
+                    --output tsv 2>/dev/null || echo '${appNum == "1" ? "0" : appNum == "2" ? "1" : "2"}')
+                
+                echo "🔍 Found rule index for app${appNum}: \$RULE_INDEX"
+                
+                az network application-gateway url-path-map update \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${pathMapName} \\
+                    --set "pathRules[\${RULE_INDEX}].backendAddressPool.id='${poolId}'"
+                """
+            } else {
+                echo "⚠️ Rule for app${appNum} not found, using fallback index"
+                def fallbackIndex = appNum == "1" ? "0" : appNum == "2" ? "1" : "2"
+                sh """
+                az network application-gateway url-path-map update \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --name ${pathMapName} \\
+                    --set "pathRules[${fallbackIndex}].backendAddressPool.id='${poolId}'"
+                """
+            }
+            echo "✅ Updated routing rule for ${appName} to point to ${poolName}"
+        } else {
+            echo "⚠️ Could not get pool ID for ${poolName}"
+        }
+        
+    } catch (Exception e) {
+        echo "⚠️ Error updating routing rule: ${e.message}"
+        echo "💡 You may need to update the routing rule manually in Azure portal"
+    }
 }
