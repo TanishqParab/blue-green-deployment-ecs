@@ -203,9 +203,6 @@ def prepareRollback(Map config) {
         }
         
         echo "✅ Rollback container (${env.ROLLBACK_ENV}) is ready with rollback application"
-        
-        // Create health probe for rollback environment
-        createHealthProbe(env.APP_GATEWAY_NAME, resourceGroup, appName)
 
     } catch (Exception e) {
         error "❌ ACI rollback preparation failed: ${e.message}"
@@ -287,6 +284,9 @@ def executeAzureAciRollback(Map config) {
     """
     
     echo "✅ Traffic successfully switched from ${env.CURRENT_ENV} to ${env.ROLLBACK_ENV}"
+    
+    // Update health probe with rollback container IP
+    createHealthProbe(appGatewayName, resourceGroup, appName, rollbackContainerIp)
     
     // Update routing rules to point to rollback environment
     echo "🔄 Updating routing rules for rollback..."
@@ -385,31 +385,29 @@ def getRegistryName(config) {
     }
 }
 
-def createHealthProbe(String appGatewayName, String resourceGroup, String appName) {
+def createHealthProbe(String appGatewayName, String resourceGroup, String appName, String containerIp) {
     try {
         def probeName = "${appName}-health-probe"
-        def httpSettingsName = "${appName}-http-settings"
         
-        echo "🔍 Ensuring health probe ${probeName} exists"
+        echo "🔍 Updating health probe ${probeName} with container IP ${containerIp}"
         
-        // Create health probe with fixed host configuration
+        // Update health probe with actual container IP
         sh """
-        az network application-gateway probe create \\
+        az network application-gateway probe update \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
-            --protocol Http \\
-            --host 127.0.0.1 \\
+            --host ${containerIp} \\
             --path /health \\
             --interval 30 \\
             --timeout 30 \\
-            --threshold 3 || echo "Probe may already exist"
+            --threshold 3 || echo "Probe update failed"
         """
         
-        echo "✅ Health probe configuration verified for ${appName}"
+        echo "✅ Health probe updated with container IP for ${appName}"
         
     } catch (Exception e) {
-        echo "⚠️ Error with health probe: ${e.message}"
+        echo "⚠️ Error updating health probe: ${e.message}"
     }
 }
 
