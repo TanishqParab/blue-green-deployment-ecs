@@ -388,23 +388,27 @@ def getRegistryName(config) {
 def createHealthProbe(String appGatewayName, String resourceGroup, String appName, String containerIp) {
     try {
         def probeName = "${appName}-health-probe"
+        def appSuffix = appName.replace("app_", "")
         
-        echo "🔍 Updating health probe ${probeName} with container IP ${containerIp}"
+        // Use correct health path based on app
+        def healthPath = appSuffix == "1" ? "/" : "/app${appSuffix}/"
         
-        // Update health probe with actual container IP
+        echo "🔍 Updating health probe ${probeName} with container IP ${containerIp} and path ${healthPath}"
+        
+        // Update health probe with actual container IP and correct path
         sh """
         az network application-gateway probe update \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
             --host ${containerIp} \\
-            --path /health \\
+            --path ${healthPath} \\
             --interval 30 \\
             --timeout 30 \\
             --threshold 3 || echo "Probe update failed"
         """
         
-        echo "✅ Health probe updated with container IP for ${appName}"
+        echo "✅ Health probe updated with container IP and path ${healthPath} for ${appName}"
         
     } catch (Exception e) {
         echo "⚠️ Error updating health probe: ${e.message}"
