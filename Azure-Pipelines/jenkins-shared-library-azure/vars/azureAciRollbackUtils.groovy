@@ -285,8 +285,8 @@ def executeAzureAciRollback(Map config) {
     
     echo "✅ Traffic successfully switched from ${env.CURRENT_ENV} to ${env.ROLLBACK_ENV}"
     
-    // Create health probe for rollback environment
-    createHealthProbe(appGatewayName, resourceGroup, appName)
+    // Update health probe for rollback environment
+    updateHealthProbeForRollback(appGatewayName, resourceGroup, appName, rollbackContainerIp)
     
     // Update routing rules to point to rollback environment
     echo "🔄 Updating routing rules for rollback..."
@@ -385,25 +385,30 @@ def getRegistryName(config) {
     }
 }
 
-def createHealthProbe(String appGatewayName, String resourceGroup, String appName) {
+def updateHealthProbeForRollback(String appGatewayName, String resourceGroup, String appName, String containerIp) {
     try {
         def probeName = "${appName}-health-probe"
         
-        echo "🔍 Updating health probe ${probeName} path to root"
+        echo "🔍 Updating health probe ${probeName} for rollback container ${containerIp}"
         
-        // Update existing probe to use correct path for Flask app
+        // Update probe with actual container IP and root path
         sh """
         az network application-gateway probe update \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
-            --path / || echo "Probe update failed"
+            --host ${containerIp} \\
+            --path / \\
+            --interval 30 \\
+            --timeout 30 \\
+            --threshold 3
         """
         
-        echo "✅ Health probe path updated to / for ${appName}"
+        echo "✅ Health probe updated for rollback container ${containerIp}"
         
     } catch (Exception e) {
         echo "⚠️ Error updating health probe: ${e.message}"
+        throw e
     }
 }
 
