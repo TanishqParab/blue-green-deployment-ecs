@@ -460,6 +460,13 @@ def updateApplication(Map config) {
         }
 
         echo "✅ Container ${env.IDLE_ENV} is ready"
+        
+        // Step 5: Ensure health probe exists (but don't update routing rules yet)
+        def appGatewayName = getAppGatewayName(config)
+        echo "🔍 Creating health probe for ${appName}..."
+        createHealthProbe(appGatewayName, resourceGroup, appName)
+        
+        echo "📝 Note: Routing rules will be updated after traffic switch to point to active environment"
 
     } catch (Exception e) {
         echo "❌ Error occurred during ACI update:\\n${e}"
@@ -616,6 +623,12 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         
         echo "✅✅✅ Traffic successfully switched from ${currentEnv} to ${actualTargetEnv} (${containerIp})!"
         
+        // Update routing rules to point to the new active backend pool
+        echo "🔄 Updating routing rules to point to new active environment..."
+        createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
+        
+        echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
+        
     } catch (Exception e) {
         echo "⚠️ Error switching traffic: ${e.message}"
         throw e
@@ -729,5 +742,105 @@ def getRegistryName(config) {
     } catch (Exception e) {
         echo "⚠️ Could not determine registry name: ${e.message}"
         return "bluegreenacrregistry"
+    }
+}
+
+def createHealthProbe(String appGatewayName, String resourceGroup, String appName) {
+    try {
+        def probeName = "${appName}-health-probe"
+        def httpSettingsName = "${appName}-http-settings"
+        
+        echo "🔍 Creating health probe ${probeName}"
+        
+        // Create health probe
+        sh """
+        az network application-gateway probe create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${probeName} \\
+            --protocol Http \\
+            --host-name-from-http-settings true \\
+            --path / \\
+            --interval 30 \\
+            --timeout 30 \\
+            --threshold 3 || echo "Probe may already exist"
+        """
+        
+        // Create HTTP settings with the probe
+        sh """
+        az network application-gateway http-settings create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${httpSettingsName} \\
+            --port 80 \\
+            --protocol Http \\
+            --timeout 30 \\
+            --probe ${probeName} || echo "HTTP settings may already exist"
+        """
+        
+        echo "✅ Created health probe and HTTP settings for ${appName}"
+        
+    } catch (Exception e) {
+        echo "⚠️ Error creating health probe: ${e.message}"
+    }
+}
+
+def createRoutingRule(String appGatewayName, String resourceGroup, String appName, String backendPoolName) {
+    try {
+        def appSuffix = appName.replace("app_", "")
+        def pathPattern = appSuffix == "1" ? "/*" : "/app${appSuffix}/*"
+        def ruleName = "path-rule-${appSuffix}"
+        def httpSettingsName = "${appName}-http-settings"
+        
+        echo "📝 Creating path rule ${ruleName} for pattern ${pathPattern}"
+        
+        // Get or create path map
+        def pathMapName = "app-path-map"
+        
+        // Check if path map exists, create if not
+        def pathMapExists = sh(
+            script: "az network application-gateway url-path-map show --gateway-name ${appGatewayName} --resource-group ${resourceGroup} --name ${pathMapName} --query name --output tsv 2>/dev/null || echo ''",
+            returnStdout: true
+        ).trim()
+        
+        if (!pathMapExists) {
+            echo "Creating path map ${pathMapName}"
+            sh """
+            az network application-gateway url-path-map create \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${pathMapName} \\
+                --default-address-pool ${backendPoolName} \\
+                --default-http-settings ${httpSettingsName}
+            """
+        }
+        
+        // Add path rule to the path map
+        sh """
+        az network application-gateway url-path-map rule create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name ${pathMapName} \\
+            --name ${ruleName} \\
+            --paths "${pathPattern}" \\
+            --address-pool ${backendPoolName} \\
+            --http-settings ${httpSettingsName} || echo "Rule may already exist"
+        """
+        
+        // Update the main routing rule to use path-based routing
+        def mainRuleName = "rule1"
+        sh """
+        az network application-gateway rule update \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${mainRuleName} \\
+            --url-path-map ${pathMapName} || echo "Main rule update failed"
+        """
+        
+        echo "✅ Created path-based routing rule for ${appName}"
+        
+    } catch (Exception e) {
+        echo "⚠️ Error creating routing rule: ${e.message}"
+        echo "💡 Manual configuration may be needed in Azure portal"
     }
 }
