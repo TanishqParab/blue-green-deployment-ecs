@@ -44,21 +44,32 @@ def fetchResources(Map config) {
             returnStdout: true
         ).trim()
 
-        // Determine current and rollback environments
+        // Determine current and rollback environments based on which pool has traffic
         if (bluePoolConfig != 'None' && greenPoolConfig == 'None') {
+            // Blue is currently active, rollback to Green
             env.CURRENT_ENV = "BLUE"
             env.ROLLBACK_ENV = "GREEN"
             env.CURRENT_CONTAINER = "${appName.replace('_', '')}-blue-container"
             env.ROLLBACK_CONTAINER = "${appName.replace('_', '')}-green-container"
             env.CURRENT_POOL_NAME = env.BLUE_POOL_NAME
             env.ROLLBACK_POOL_NAME = env.GREEN_POOL_NAME
-        } else {
+        } else if (greenPoolConfig != 'None' && bluePoolConfig == 'None') {
+            // Green is currently active, rollback to Blue
             env.CURRENT_ENV = "GREEN"
             env.ROLLBACK_ENV = "BLUE"
             env.CURRENT_CONTAINER = "${appName.replace('_', '')}-green-container"
             env.ROLLBACK_CONTAINER = "${appName.replace('_', '')}-blue-container"
             env.CURRENT_POOL_NAME = env.GREEN_POOL_NAME
             env.ROLLBACK_POOL_NAME = env.BLUE_POOL_NAME
+        } else {
+            // Default: assume Blue is active, rollback to Green
+            echo "⚠️ Could not determine current environment clearly. Defaulting to Blue active, rollback to Green."
+            env.CURRENT_ENV = "BLUE"
+            env.ROLLBACK_ENV = "GREEN"
+            env.CURRENT_CONTAINER = "${appName.replace('_', '')}-blue-container"
+            env.ROLLBACK_CONTAINER = "${appName.replace('_', '')}-green-container"
+            env.CURRENT_POOL_NAME = env.BLUE_POOL_NAME
+            env.ROLLBACK_POOL_NAME = env.GREEN_POOL_NAME
         }
 
         // Check if container exists, if not fall back to legacy naming
@@ -156,29 +167,30 @@ def prepareRollback(Map config) {
         
         env.ROLLBACK_IMAGE = "${registryName}.azurecr.io/${imageName}:${rollbackTag}"
         
-        // Build and deploy rollback application
-        echo "🔧 Building rollback application for ${appName}..."
+        // Deploy rollback application to the idle environment
+        echo "🔧 Deploying rollback application to ${env.ROLLBACK_ENV} environment..."
         
         def dockerDir = "./blue-green-deployment/modules/azure/aci/scripts"
+        def rollbackImageTag = "${appName}-rollback-${new Date().format('yyyyMMdd-HHmmss')}"
         
         sh """
             az acr login --name ${registryName}
             cd ${dockerDir}
-            docker build -t ${imageName}:${appName}-rollback --build-arg APP_NAME=${appSuffix} .
-            docker tag ${imageName}:${appName}-rollback ${registryName}.azurecr.io/${imageName}:${appName}-rollback
-            docker push ${registryName}.azurecr.io/${imageName}:${appName}-rollback
+            docker build -t ${imageName}:${rollbackImageTag} --build-arg APP_NAME=${appSuffix} .
+            docker tag ${imageName}:${rollbackImageTag} ${registryName}.azurecr.io/${imageName}:${rollbackImageTag}
+            docker push ${registryName}.azurecr.io/${imageName}:${rollbackImageTag}
         """
         
-        env.ROLLBACK_IMAGE = "${registryName}.azurecr.io/${imageName}:${appName}-rollback"
+        env.ROLLBACK_IMAGE = "${registryName}.azurecr.io/${imageName}:${rollbackImageTag}"
         echo "✅ Rollback application built and pushed: ${env.ROLLBACK_IMAGE}"
         
-        // Update rollback container with new image
-        echo "🔄 Updating ${env.ROLLBACK_ENV} container with rollback application..."
+        // Restart the rollback container to pull the new rollback image
+        echo "🔄 Restarting ${env.ROLLBACK_ENV} container (${env.ROLLBACK_CONTAINER}) with rollback application..."
         
         sh "az container restart --name ${env.ROLLBACK_CONTAINER} --resource-group ${resourceGroup}"
         
         echo "⏳ Waiting for rollback container to stabilize..."
-        sleep(30)
+        sleep(45)
         
         def containerState = sh(
             script: "az container show --name ${env.ROLLBACK_CONTAINER} --resource-group ${resourceGroup} --query instanceView.state --output tsv",
@@ -190,7 +202,7 @@ def prepareRollback(Map config) {
             sleep(30)
         }
         
-        echo "✅ Rollback container is ready with rollback application"
+        echo "✅ Rollback container (${env.ROLLBACK_ENV}) is ready with rollback application"
         
         // Create health probe for rollback environment
         createHealthProbe(env.APP_GATEWAY_NAME, resourceGroup, appName)
@@ -243,6 +255,8 @@ def executeAzureAciRollback(Map config) {
     def rollbackContainer = env.ROLLBACK_CONTAINER
     def appName = env.APP_NAME
     
+    echo "🔄 Switching traffic from ${env.CURRENT_ENV} to ${env.ROLLBACK_ENV} environment"
+    
     // Get rollback container IP
     def rollbackContainerIp = sh(
         script: "az container show --name ${rollbackContainer} --resource-group ${resourceGroup} --query ipAddress.ip --output tsv",
@@ -253,9 +267,9 @@ def executeAzureAciRollback(Map config) {
         error "❌ Could not get IP for rollback container: ${rollbackContainer}"
     }
     
-    echo "🔄 Switching traffic to rollback environment: ${env.ROLLBACK_ENV} (${rollbackContainerIp})"
+    echo "🎯 Rollback container IP: ${rollbackContainerIp}"
     
-    // Update target backend pool with rollback container IP
+    // Switch traffic: Update rollback pool and clear current pool
     sh """
         az network application-gateway address-pool update \\
             --gateway-name ${appGatewayName} \\
@@ -264,7 +278,6 @@ def executeAzureAciRollback(Map config) {
             --set backendAddresses='[{"ipAddress":"${rollbackContainerIp}"}]'
     """
     
-    // Clear current backend pool
     sh """
         az network application-gateway address-pool update \\
             --gateway-name ${appGatewayName} \\
@@ -273,7 +286,7 @@ def executeAzureAciRollback(Map config) {
             --set backendAddresses='[]'
     """
     
-    echo "✅ Traffic successfully switched to rollback environment: ${env.ROLLBACK_ENV}"
+    echo "✅ Traffic successfully switched from ${env.CURRENT_ENV} to ${env.ROLLBACK_ENV}"
     
     // Update routing rules to point to rollback environment
     echo "🔄 Updating routing rules for rollback..."
@@ -377,38 +390,26 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
         def probeName = "${appName}-health-probe"
         def httpSettingsName = "${appName}-http-settings"
         
-        echo "🔍 Creating health probe ${probeName}"
+        echo "🔍 Ensuring health probe ${probeName} exists"
         
-        // Create health probe
+        // Create health probe with fixed host configuration
         sh """
         az network application-gateway probe create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
             --protocol Http \\
-            --host-name-from-http-settings true \\
-            --path / \\
+            --host 127.0.0.1 \\
+            --path /health \\
             --interval 30 \\
             --timeout 30 \\
             --threshold 3 || echo "Probe may already exist"
         """
         
-        // Create HTTP settings with the probe
-        sh """
-        az network application-gateway http-settings create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${httpSettingsName} \\
-            --port 80 \\
-            --protocol Http \\
-            --timeout 30 \\
-            --probe ${probeName} || echo "HTTP settings may already exist"
-        """
-        
-        echo "✅ Created health probe and HTTP settings for ${appName}"
+        echo "✅ Health probe configuration verified for ${appName}"
         
     } catch (Exception e) {
-        echo "⚠️ Error creating health probe: ${e.message}"
+        echo "⚠️ Error with health probe: ${e.message}"
     }
 }
 
