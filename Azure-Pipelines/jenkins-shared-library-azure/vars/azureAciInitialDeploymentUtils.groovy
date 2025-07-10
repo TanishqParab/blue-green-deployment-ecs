@@ -171,61 +171,22 @@ def deployToBlueContainer(Map config) {
 }
 
 def getResourceGroupName(config) {
-    try {
-        def resourceGroup = sh(
-            script: "terraform output -raw resource_group_name 2>/dev/null || echo ''",
-            returnStdout: true
-        ).trim()
-        
-        if (!resourceGroup || resourceGroup == '') {
-            resourceGroup = sh(
-                script: "grep 'resource_group_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
-                returnStdout: true
-            ).trim()
-        }
-        
-        return resourceGroup
-    } catch (Exception e) {
-        return "cloud-pratice-Tanishq.Parab-RG"
-    }
+    // Use known resource group directly since terraform output is unreliable
+    def resourceGroup = "cloud-pratice-Tanishq.Parab-RG"
+    echo "📋 Using resource group: ${resourceGroup}"
+    return resourceGroup
 }
 
 def getRegistryName(config) {
-    try {
-        def registryName = sh(
-            script: "terraform output -raw registry_name 2>/dev/null || echo ''",
-            returnStdout: true
-        ).trim()
-        
-        if (!registryName || registryName == '') {
-            registryName = sh(
-                script: "grep 'registry_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
-                returnStdout: true
-            ).trim()
-        }
-        
-        return registryName
-    } catch (Exception e) {
-        return "bluegreenacrregistry"
-    }
+    // Use known registry name directly since terraform output is unreliable
+    def registryName = "bluegreenacrregistry"
+    echo "📦 Using Container Registry: ${registryName}"
+    return registryName
 }
 
 def getAppGatewayName(config) {
-    try {
-        def appGatewayName = sh(
-            script: "terraform output -raw app_gateway_name 2>/dev/null || echo ''",
-            returnStdout: true
-        ).trim()
-        
-        if (!appGatewayName || appGatewayName == '') {
-            appGatewayName = sh(
-                script: "grep 'app_gateway_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
-                returnStdout: true
-            ).trim()
-        }
-        
-        return appGatewayName
-    } catch (Exception e) {
-        return "blue-green-appgw"
-    }
+    // Use known app gateway name directly since terraform output is unreliable
+    def appGatewayName = "blue-green-appgw"
+    echo "🌐 Using Application Gateway: ${appGatewayName}"
+    return appGatewayName
 }
