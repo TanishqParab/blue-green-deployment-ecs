@@ -417,9 +417,11 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
         def appSuffix = appName.replace("app_", "")
         def existingRuleName = "${appName}-path-rule"
         def httpSettingsName = "${appName}-http-settings"
-        def pathPattern = "/app${appSuffix}*"
         
-        echo "📝 Updating path rule ${existingRuleName} to point to ${backendPoolName}"
+        // For app_1, handle both root and /app1 paths
+        def pathPattern = appSuffix == "1" ? "/*" : "/app${appSuffix}*"
+        
+        echo "📝 Updating path rule ${existingRuleName} to point to ${backendPoolName} with pattern ${pathPattern}"
         
         // Delete and recreate the path rule to update it
         sh """
@@ -430,7 +432,7 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
             --path-map-name main-path-map \\
             --name ${existingRuleName} || echo "Rule may not exist"
         
-        # Recreate rule with new backend pool
+        # Recreate rule with new backend pool and correct path pattern
         az network application-gateway url-path-map rule create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
@@ -441,7 +443,7 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
             --http-settings ${httpSettingsName}
         """
         
-        echo "✅ Updated path rule to point to ${backendPoolName}"
+        echo "✅ Updated path rule to point to ${backendPoolName} with pattern ${pathPattern}"
         
     } catch (Exception e) {
         echo "⚠️ Error updating routing rule: ${e.message}"
