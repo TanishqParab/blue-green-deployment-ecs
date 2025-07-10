@@ -111,6 +111,7 @@ pipeline {
                     def config = azureDeploymentVars()
                     config.implementation = 'azure-aci'
                     config.cloudProvider = 'azure'
+                    config.tfWorkingDir = './blue-green-deployment'
                     config.tfVarsFile = 'terraform-azure.tfvars'
                     
                     echo "DEBUG: Config implementation: ${config.implementation}"
@@ -160,11 +161,11 @@ pipeline {
                             echo "Deploying initial application: ${appName}"
                             def appConfig = config.clone()
                             appConfig.appName = appName
-                            azureAciInitialDeploymentImpl.deployInitialApplication(appConfig)
+                            azureAciInitialDeploymentUtils.deployToBlueContainer(appConfig)
                         }
                     } else {
                         config.appName = params.APP_NAME
-                        azureAciInitialDeploymentImpl.deployInitialApplication(config)
+                        azureAciInitialDeploymentUtils.deployToBlueContainer(config)
                     }
                 }
             }
