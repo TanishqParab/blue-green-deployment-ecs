@@ -388,14 +388,13 @@ def getRegistryName(config) {
 def createHealthProbe(String appGatewayName, String resourceGroup, String appName, String containerIp) {
     try {
         def probeName = "${appName}-health-probe"
-        def appSuffix = appName.replace("app_", "")
         
-        // Use correct health path based on app
-        def healthPath = appSuffix == "1" ? "/" : "/app${appSuffix}/"
+        // Test container directly at root path since Flask apps serve at root
+        def healthPath = "/"
         
         echo "🔍 Updating health probe ${probeName} with container IP ${containerIp} and path ${healthPath}"
         
-        // Update health probe with actual container IP and correct path
+        // Update health probe with actual container IP and root path
         sh """
         az network application-gateway probe update \\
             --gateway-name ${appGatewayName} \\
@@ -408,7 +407,7 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
             --threshold 3 || echo "Probe update failed"
         """
         
-        echo "✅ Health probe updated with container IP and path ${healthPath} for ${appName}"
+        echo "✅ Health probe updated with container IP and root path for ${appName}"
         
     } catch (Exception e) {
         echo "⚠️ Error updating health probe: ${e.message}"
