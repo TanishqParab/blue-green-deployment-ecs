@@ -418,8 +418,8 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
         def existingRuleName = "${appName}-path-rule"
         def httpSettingsName = "${appName}-http-settings"
         
-        // For app_1, handle both root and /app1 paths
-        def pathPattern = appSuffix == "1" ? "/*" : "/app${appSuffix}*"
+        // For all apps, handle both root and app-specific paths
+        def pathPattern = "/*"
         
         echo "📝 Updating path rule ${existingRuleName} to point to ${backendPoolName} with pattern ${pathPattern}"
         
