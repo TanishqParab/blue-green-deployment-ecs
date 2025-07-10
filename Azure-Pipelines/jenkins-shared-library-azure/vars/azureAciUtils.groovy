@@ -483,20 +483,43 @@ def updateApplication(Map config) {
 def parseJsonSafe(String jsonText) {
     try {
         if (!jsonText || jsonText.trim().isEmpty() || jsonText.trim() == "null") {
-            return [:]
+            return []
         }
         
         if (!jsonText.trim().startsWith("{") && !jsonText.trim().startsWith("[")) {
-            return [:]
+            return []
         }
         
         def parsed = new JsonSlurper().parseText(jsonText)
-        def safeMap = [:]
-        safeMap.putAll(parsed)
-        return safeMap
+        
+        // If it's an array, convert each item to a simple map
+        if (parsed instanceof List) {
+            def result = []
+            parsed.each { item ->
+                if (item instanceof Map) {
+                    def simpleMap = [:]
+                    item.each { key, value ->
+                        simpleMap[key] = value
+                    }
+                    result.add(simpleMap)
+                }
+            }
+            return result
+        }
+        
+        // If it's a map, convert to simple map
+        if (parsed instanceof Map) {
+            def simpleMap = [:]
+            parsed.each { key, value ->
+                simpleMap[key] = value
+            }
+            return simpleMap
+        }
+        
+        return parsed
     } catch (Exception e) {
         echo "⚠️ Error in parseJsonSafe: ${e.message}"
-        return [:]
+        return []
     }
 }
 
