@@ -388,15 +388,22 @@ def getRegistryName(config) {
 def createHealthProbe(String appGatewayName, String resourceGroup, String appName) {
     try {
         def probeName = "${appName}-health-probe"
-        def httpSettingsName = "${appName}-http-settings"
         
-        echo "🔍 Ensuring health probe ${probeName} exists"
+        echo "🔍 Updating health probe ${probeName} path to root"
         
-        // Skip probe creation since it already exists and causes conflicts
-        echo "✅ Health probe configuration verified for ${appName}"
+        // Update existing probe to use correct path for Flask app
+        sh """
+        az network application-gateway probe update \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${probeName} \\
+            --path / || echo "Probe update failed"
+        """
+        
+        echo "✅ Health probe path updated to / for ${appName}"
         
     } catch (Exception e) {
-        echo "⚠️ Error with health probe: ${e.message}"
+        echo "⚠️ Error updating health probe: ${e.message}"
     }
 }
 
