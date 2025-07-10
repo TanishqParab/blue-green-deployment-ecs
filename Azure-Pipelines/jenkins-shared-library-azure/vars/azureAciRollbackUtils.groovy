@@ -417,58 +417,11 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
         def appSuffix = appName.replace("app_", "")
         def existingRuleName = "${appName}-path-rule"
         def httpSettingsName = "${appName}-http-settings"
-        def rewriteRuleSetName = "${appName}-rewrite-set"
-        
-        // Use app-specific path patterns
         def pathPattern = "/app${appSuffix}*"
         
-        echo "📝 Creating URL rewrite rule to strip /app${appSuffix} prefix"
+        echo "📝 Updating path rule ${existingRuleName} to point to ${backendPoolName}"
         
-        // Create rewrite rule set to strip app prefix
-        sh """
-        # Create rewrite rule set
-        az network application-gateway rewrite-rule-set create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${rewriteRuleSetName} || echo "Rewrite set may already exist"
-        
-        # Create rewrite rule to strip app prefix
-        az network application-gateway rewrite-rule-set rule create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --rule-set-name ${rewriteRuleSetName} \\
-            --name "strip-app${appSuffix}-prefix" \\
-            --sequence 100 || echo "Rewrite rule may already exist"
-        
-        # Add condition to match app path
-        az network application-gateway rewrite-rule-set rule condition create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --rule-set-name ${rewriteRuleSetName} \\
-            --rule-name "strip-app${appSuffix}-prefix" \\
-            --variable "var_uri_path" \\
-            --pattern "/app${appSuffix}(/.*)?" \\
-            --ignore-case true || echo "Condition may already exist"
-        
-        # Add action to rewrite URL path
-        az network application-gateway rewrite-rule-set rule action-set create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --rule-set-name ${rewriteRuleSetName} \\
-            --rule-name "strip-app${appSuffix}-prefix" || echo "Action set may already exist"
-        
-        az network application-gateway rewrite-rule-set rule action-set url-configuration create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --rule-set-name ${rewriteRuleSetName} \\
-            --rule-name "strip-app${appSuffix}-prefix" \\
-            --modified-path "{var_uri_path_1}" \\
-            --reroute false || echo "URL config may already exist"
-        """
-        
-        echo "📝 Updating path rule ${existingRuleName} to point to ${backendPoolName} with rewrite"
-        
-        // Delete and recreate the path rule with rewrite rule set
+        // Delete and recreate the path rule
         sh """
         # Delete existing rule
         az network application-gateway url-path-map rule delete \\
@@ -477,7 +430,7 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
             --path-map-name main-path-map \\
             --name ${existingRuleName} || echo "Rule may not exist"
         
-        # Recreate rule with rewrite rule set
+        # Recreate rule with new backend pool
         az network application-gateway url-path-map rule create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
@@ -485,11 +438,10 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
             --name ${existingRuleName} \\
             --paths "${pathPattern}" \\
             --address-pool ${backendPoolName} \\
-            --http-settings ${httpSettingsName} \\
-            --rewrite-rule-set ${rewriteRuleSetName}
+            --http-settings ${httpSettingsName}
         """
         
-        echo "✅ Updated path rule with URL rewrite to strip /app${appSuffix} prefix"
+        echo "✅ Updated path rule to point to ${backendPoolName}"
         
     } catch (Exception e) {
         echo "⚠️ Error updating routing rule: ${e.message}"
