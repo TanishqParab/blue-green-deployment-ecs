@@ -849,6 +849,9 @@ def deployViaAzureRunCommand(String vmName, String resourceGroup, String appName
     echo "🚀 Deploying via Azure Run Command to ${vmName}"
     
     try {
+        // Create backup of current version before deployment
+        createBackupVersion(appFileSource, appName)
+        
         // Read the app file content and encode it as base64 to avoid shell escaping issues
         def appContent = readFile(appFileSource)
         def encodedContent = appContent.bytes.encodeBase64().toString()
@@ -872,5 +875,22 @@ def deployViaAzureRunCommand(String vmName, String resourceGroup, String appName
         echo "❌ Deployment via Azure Run Command failed: ${e.message}"
         echo "⚠️ Manual deployment may be required"
         throw e
+    }
+}
+
+// Helper function to create backup versions for rollback
+def createBackupVersion(String appFileSource, String appName) {
+    try {
+        def appBaseName = appName.replace('app', 'app_')
+        def backupFilePath = "blue-green-deployment/modules/azure/vm/scripts/${appBaseName}_backup.py"
+        
+        if (fileExists(appFileSource)) {
+            // Copy current version to backup before deploying new version
+            def currentContent = readFile(appFileSource)
+            writeFile file: backupFilePath, text: currentContent
+            echo "📦 Created backup version: ${backupFilePath}"
+        }
+    } catch (Exception e) {
+        echo "⚠️ Failed to create backup version: ${e.message}"
     }
 }
