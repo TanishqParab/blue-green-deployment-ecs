@@ -627,6 +627,12 @@ def scaleDownOldEnvironment(Map config) {
     
     echo "DEBUG: scaleDownOldEnvironment received config keys: ${config.keySet()}"
     
+    // Skip scaling down for blue-green deployment - keep both environments running
+    echo "📝 Skipping container scale down to maintain blue-green deployment capability"
+    echo "📝 Both BLUE and GREEN containers will remain running for future deployments"
+    
+    // Optional: You can uncomment the code below if you want to scale down the idle environment
+    /*
     // Determine which container to scale down (the one NOT receiving traffic)
     def containerToScaleDown
     
@@ -639,30 +645,17 @@ def scaleDownOldEnvironment(Map config) {
     echo "🔍 LIVE_ENV (currently receiving traffic): ${config.LIVE_ENV}"
     echo "🔽 Will scale down IDLE container: ${containerToScaleDown}"
     
-    echo "🔄 Scaling down IDLE container: ${containerToScaleDown} (not receiving traffic)"
-    
     try {
-        // For ACI, we can stop the container or reduce its resources
         sh """
         az container stop \\
           --name ${containerToScaleDown} \\
           --resource-group ${resourceGroup}
         """
         echo "✅ Scaled down old container: ${containerToScaleDown}"
-
-        echo "⏳ Waiting for old container to stop..."
-        sleep(10)
-        
-        def containerState = sh(
-            script: "az container show --name ${containerToScaleDown} --resource-group ${resourceGroup} --query instanceView.state --output tsv",
-            returnStdout: true
-        ).trim()
-        
-        echo "✅ Old container ${containerToScaleDown} state: ${containerState}"
     } catch (Exception e) {
         echo "⚠️ Warning during scale down: ${e.message}"
-        echo "⚠️ Continuing despite scale down issues..."
     }
+    */
 }
 
 def getResourceGroupName(config) {
@@ -782,18 +775,28 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
         def appSuffix = appName.replace("app_", "")
         def existingRuleName = "${appName}-path-rule"
         def httpSettingsName = "${appName}-http-settings"
+        def pathPattern = "/app${appSuffix}*"
         
         echo "📝 Updating existing path rule ${existingRuleName} to point to ${backendPoolName}"
         
-        // Update the existing path rule in main-path-map to point to the new backend pool
+        // Delete and recreate the path rule to update it
         sh """
-        az network application-gateway url-path-map rule update \\
+        # Delete existing rule
+        az network application-gateway url-path-map rule delete \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name main-path-map \\
+            --name ${existingRuleName} || echo "Rule may not exist"
+        
+        # Recreate rule with new backend pool
+        az network application-gateway url-path-map rule create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --path-map-name main-path-map \\
             --name ${existingRuleName} \\
+            --paths "${pathPattern}" \\
             --address-pool ${backendPoolName} \\
-            --http-settings ${httpSettingsName} || echo "Rule update may have failed"
+            --http-settings ${httpSettingsName}
         """
         
         echo "✅ Updated path rule to point to ${backendPoolName}"
