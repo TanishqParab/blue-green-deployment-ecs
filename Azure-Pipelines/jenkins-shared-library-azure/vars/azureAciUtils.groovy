@@ -219,6 +219,11 @@ def fetchResources(Map config) {
     } catch (Exception e) {
         echo "⚠️ Warning: ACI resource fetch encountered issues: ${e.message}"
         echo "⚠️ Continuing with minimal configuration..."
+        def appName = env.CHANGED_APP ?: config.appName ?: "app_1"
+        result.APP_NAME = appName
+        result.APP_SUFFIX = appName.replace("app_", "")
+        result.RESOURCE_GROUP = "cloud-pratice-Tanishq.Parab-RG"
+        result.APP_GATEWAY_NAME = "blue-green-appgw"
         result.BLUE_POOL_NAME = "${appName}-blue-pool"
         result.GREEN_POOL_NAME = "${appName}-green-pool"
         result.LIVE_ENV = "BLUE"
@@ -685,11 +690,13 @@ def getResourceGroupName(config) {
             returnStdout: true
         ).trim()
         
+        // Clean up terraform warning messages
+        if (resourceGroup.contains('Warning:') || resourceGroup.contains('[')) {
+            resourceGroup = ""
+        }
+        
         if (!resourceGroup || resourceGroup == '') {
-            resourceGroup = sh(
-                script: "cd blue-green-deployment && grep 'resource_group_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
-                returnStdout: true
-            ).trim()
+            resourceGroup = "cloud-pratice-Tanishq.Parab-RG"
         }
         
         echo "📋 Using resource group: ${resourceGroup}"
@@ -707,11 +714,13 @@ def getAppGatewayName(config) {
             returnStdout: true
         ).trim()
         
+        // Clean up terraform warning messages
+        if (appGatewayName.contains('Warning:') || appGatewayName.contains('[')) {
+            appGatewayName = ""
+        }
+        
         if (!appGatewayName || appGatewayName == '') {
-            appGatewayName = sh(
-                script: "cd blue-green-deployment && grep 'app_gateway_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
-                returnStdout: true
-            ).trim()
+            appGatewayName = "blue-green-appgw"
         }
         
         echo "🌐 Using Application Gateway: ${appGatewayName}"
@@ -729,11 +738,13 @@ def getRegistryName(config) {
             returnStdout: true
         ).trim()
         
+        // Clean up terraform warning messages
+        if (registryName.contains('Warning:') || registryName.contains('[')) {
+            registryName = ""
+        }
+        
         if (!registryName || registryName == '') {
-            registryName = sh(
-                script: "cd blue-green-deployment && grep 'registry_name' terraform-azure.tfvars | head -1 | cut -d'\"' -f2",
-                returnStdout: true
-            ).trim()
+            registryName = "bluegreenacrregistry"
         }
         
         echo "📦 Using Container Registry: ${registryName}"
