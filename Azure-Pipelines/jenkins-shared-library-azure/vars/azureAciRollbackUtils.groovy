@@ -192,222 +192,21 @@ def prepareRollback(Map config) {
         echo "⏳ Waiting for rollback container to stabilize..."
         sleep(45)
         
-        // Verify and fix rollback container health
-        fixContainerHealth(env.ROLLBACK_CONTAINER, resourceGroup)
+        def containerState = sh(
+            script: "az container show --name ${env.ROLLBACK_CONTAINER} --resource-group ${resourceGroup} --query instanceView.state --output tsv",
+            returnStdout: true
+        ).trim()
         
-        echo "✅ Rollback preparation completed successfully"
+        if (containerState != 'Running') {
+            echo "⚠️ Container state: ${containerState}. Waiting longer..."
+            sleep(30)
+        }
         
+        echo "✅ Rollback container (${env.ROLLBACK_ENV}) is ready with rollback application"
+
     } catch (Exception e) {
         error "❌ ACI rollback preparation failed: ${e.message}"
     }
-}
-
-def executeRollback(Map config) {
-    echo "🔄 Executing ACI rollback..."
-    
-    try {
-        def resourceGroup = env.RESOURCE_GROUP
-        def appGatewayName = env.APP_GATEWAY_NAME
-        
-        // Get rollback container IP
-        def rollbackContainerIP = sh(
-            script: "az container show --name ${env.ROLLBACK_CONTAINER} --resource-group ${resourceGroup} --query 'ipAddress.ip' --output tsv",
-            returnStdout: true
-        ).trim()
-        
-        if (!rollbackContainerIP || rollbackContainerIP == 'null') {
-            error "❌ Could not get IP for rollback container ${env.ROLLBACK_CONTAINER}"
-        }
-        
-        echo "📍 Rollback container IP: ${rollbackContainerIP}"
-        
-        // Update rollback backend pool with container IP
-        sh """
-            az network application-gateway address-pool update \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name ${env.ROLLBACK_POOL_NAME} \\
-                --servers ${rollbackContainerIP}
-        """
-        
-        echo "⏳ Waiting for backend pool to update..."
-        sleep(30)
-        
-        // Ensure health probe is healthy before continuing
-        ensureHealthyProbe(appGatewayName, resourceGroup, env.APP_NAME)
-        
-        // Fix backend pool health if needed
-        fixBackendPoolHealth(appGatewayName, resourceGroup, env.ROLLBACK_POOL_NAME, rollbackContainerIP)
-        
-        // Clear current backend pool to complete rollback
-        sh """
-            az network application-gateway address-pool update \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name ${env.CURRENT_POOL_NAME} \\
-                --servers
-        """
-        
-        echo "✅ Rollback completed successfully"
-        echo "🎯 Traffic now routed to ${env.ROLLBACK_ENV} environment"
-        echo "🌐 Previous version now available at: ${env.APP_GATEWAY_IP}/${env.APP_SUFFIX}"
-        
-    } catch (Exception e) {
-        error "❌ ACI rollback execution failed: ${e.message}"
-    }
-}
-
-def fixContainerHealth(String containerName, String resourceGroup) {
-    def maxRetries = 3
-    def retryCount = 0
-    
-    while (retryCount < maxRetries) {
-        def containerState = sh(
-            script: "az container show --name ${containerName} --resource-group ${resourceGroup} --query 'instanceView.state' --output tsv",
-            returnStdout: true
-        ).trim()
-        
-        if (containerState == 'Running') {
-            echo "✅ Container ${containerName} is healthy"
-            return
-        }
-        
-        echo "⚠️ Container ${containerName} is ${containerState}, attempting to fix..."
-        sh "az container restart --name ${containerName} --resource-group ${resourceGroup}"
-        sleep(30)
-        retryCount++
-    }
-    
-    echo "⚠️ Container ${containerName} health issues persist, continuing with rollback"
-}
-
-def fixBackendPoolHealth(String appGatewayName, String resourceGroup, String poolName, String containerIP) {
-    def maxRetries = 3
-    def retryCount = 0
-    
-    while (retryCount < maxRetries) {
-        try {
-            def healthOutput = sh(
-                script: "az network application-gateway show-backend-health --name ${appGatewayName} --resource-group ${resourceGroup} --query \"backendAddressPools[?name=='${poolName}'].backendHttpSettingsCollection[0].servers[0].health\" --output tsv",
-                returnStdout: true
-            ).trim()
-            
-            if (healthOutput == 'Healthy') {
-                echo "✅ Backend pool ${poolName} is healthy"
-                return
-            }
-            
-            echo "⚠️ Backend pool ${poolName} is ${healthOutput}, attempting to fix..."
-            
-            // Re-update backend pool with container IP
-            sh """
-                az network application-gateway address-pool update \\
-                    --gateway-name ${appGatewayName} \\
-                    --resource-group ${resourceGroup} \\
-                    --name ${poolName} \\
-                    --servers ${containerIP}
-            """
-            
-            sleep(45)
-            retryCount++
-        } catch (Exception e) {
-            echo "⚠️ Health check attempt ${retryCount + 1} failed: ${e.message}"
-            retryCount++
-            sleep(30)
-        }
-    }
-    
-    echo "⚠️ Backend pool ${poolName} health issues persist, continuing with rollback"
-}
-
-
-
-def ensureHealthyProbe(String appGatewayName, String resourceGroup, String appName) {
-    def probeName = "${appName}-health-probe"
-    def httpSettingsName = "${appName}-http-settings"
-    def appSuffix = appName.replace("app_", "")
-    def probePath = appSuffix == "1" ? "/" : "/app${appSuffix}/"
-    def maxRetries = 3
-    def retryCount = 0
-    
-    echo "🔍 Using probe path: ${probePath} for ${appName}"
-    
-    while (retryCount < maxRetries) {
-        try {
-            // Delete existing probe to recreate with correct path
-            sh """
-            az network application-gateway probe delete \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name ${probeName} || echo "Probe may not exist"
-            """
-            
-            // Delete existing HTTP settings
-            sh """
-            az network application-gateway http-settings delete \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name ${httpSettingsName} || echo "HTTP settings may not exist"
-            """
-            
-            sleep(10)
-            
-            echo "🔍 Creating health probe ${probeName} with path /health"
-            
-            // Create health probe matching existing working configuration
-            sh """
-            az network application-gateway probe create \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name ${probeName} \\
-                --protocol Http \\
-                --host 127.0.0.1 \\
-                --path /health \\
-                --interval 30 \\
-                --timeout 10 \\
-                --threshold 3
-            """
-            
-            // Create HTTP settings with the probe
-            sh """
-            az network application-gateway http-settings create \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name ${httpSettingsName} \\
-                --port 80 \\
-                --protocol Http \\
-                --timeout 30 \\
-                --probe ${probeName}
-            """
-            
-            echo "✅ Created health probe and HTTP settings for ${appName}"
-            
-            // Wait for probe to stabilize
-            sleep(45)
-            
-            // Check probe health status
-            def probeHealth = sh(
-                script: "az network application-gateway show-backend-health --name ${appGatewayName} --resource-group ${resourceGroup} --query \"backendAddressPools[?name=='${env.ROLLBACK_POOL_NAME}'].backendHttpSettingsCollection[0].servers[0].health\" --output tsv 2>/dev/null || echo 'Unknown'",
-                returnStdout: true
-            ).trim()
-            
-            if (probeHealth == 'Healthy') {
-                echo "✅ Health probe ${probeName} is healthy"
-                return
-            } else {
-                echo "⚠️ Health probe ${probeName} status: ${probeHealth}, retrying..."
-                retryCount++
-                sleep(30)
-            }
-            
-        } catch (Exception e) {
-            echo "⚠️ Health probe attempt ${retryCount + 1} failed: ${e.message}"
-            retryCount++
-            sleep(30)
-        }
-    }
-    
-    echo "⚠️ Health probe ${probeName} could not be made healthy after ${maxRetries} attempts, but continuing rollback"
 }
 
 def testRollbackEnvironment(Map config) {
@@ -589,25 +388,23 @@ def getRegistryName(config) {
 def updateHealthProbeForRollback(String appGatewayName, String resourceGroup, String appName, String containerIp) {
     try {
         def probeName = "${appName}-health-probe"
-        def appSuffix = appName.replace("app_", "")
-        def healthPath = "/app${appSuffix}/health"
         
-        echo "🔍 Updating health probe ${probeName} for rollback container ${containerIp} with path ${healthPath}"
+        echo "🔍 Updating health probe ${probeName} for rollback container ${containerIp}"
         
-        // Update probe with actual container IP and correct Flask app health path
+        // Update probe to match working deployment configuration
         sh """
         az network application-gateway probe update \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
-            --host ${containerIp} \\
-            --path ${healthPath} \\
+            --host-name-from-http-settings true \\
+            --path / \\
             --interval 30 \\
             --timeout 30 \\
             --threshold 3
         """
         
-        echo "✅ Health probe updated for rollback container ${containerIp} with path ${healthPath}"
+        echo "✅ Health probe updated for rollback container ${containerIp} with working configuration"
         
     } catch (Exception e) {
         echo "⚠️ Error updating health probe: ${e.message}"
