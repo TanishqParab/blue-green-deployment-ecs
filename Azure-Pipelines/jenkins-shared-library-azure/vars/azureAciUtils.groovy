@@ -602,42 +602,19 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         createHealthProbe(appGatewayName, resourceGroup, appName)
         sleep(15)
         
-        // Validate and remediate target pool health before clearing source pool
-        def maxHealthRetries = 5
-        def healthRetryCount = 0
-        def targetPoolHealthy = false
+        // Validate target pool health - recreate if unhealthy
+        def healthStatus = sh(
+            script: "az network application-gateway show-backend-health --name ${appGatewayName} --resource-group ${resourceGroup} --query \"backendAddressPools[?name=='${targetPoolName}'].backendHttpSettingsCollection[0].servers[0].health\" --output tsv 2>/dev/null || echo 'Unknown'",
+            returnStdout: true
+        ).trim()
         
-        while (healthRetryCount < maxHealthRetries && !targetPoolHealthy) {
-            try {
-                def healthStatus = sh(
-                    script: "az network application-gateway show-backend-health --name ${appGatewayName} --resource-group ${resourceGroup} --query \"backendAddressPools[?name=='${targetPoolName}'].backendHttpSettingsCollection[0].servers[0].health\" --output tsv 2>/dev/null || echo 'Unknown'",
-                    returnStdout: true
-                ).trim()
-                
-                if (healthStatus == 'Healthy') {
-                    echo "✅ Target backend pool ${targetPoolName} is healthy"
-                    targetPoolHealthy = true
-                } else {
-                    echo "⚠️ Target backend pool ${targetPoolName} health: ${healthStatus} (attempt ${healthRetryCount + 1}/${maxHealthRetries})"
-                    echo "🔧 Attempting to remediate unhealthy backend pool..."
-                    
-                    // Remediation steps
-                    remediateUnhealthyBackend(appGatewayName, resourceGroup, appName, targetPoolName, containerIp, actualTargetEnv)
-                    
-                    sleep(45)
-                    healthRetryCount++
-                }
-            } catch (Exception e) {
-                echo "⚠️ Health check attempt ${healthRetryCount + 1} failed: ${e.message}"
-                echo "🔧 Attempting remediation due to health check failure..."
-                remediateUnhealthyBackend(appGatewayName, resourceGroup, appName, targetPoolName, containerIp, actualTargetEnv)
-                sleep(45)
-                healthRetryCount++
-            }
-        }
-        
-        if (!targetPoolHealthy) {
-            error "❌ Failed to bring target pool to healthy state after ${maxHealthRetries} attempts. Deployment aborted."
+        if (healthStatus != 'Healthy') {
+            echo "⚠️ Target pool ${targetPoolName} is unhealthy (${healthStatus}). Recreating..."
+            recreateBackendPool(appGatewayName, resourceGroup, appName, targetPoolName, containerIp)
+            createHealthProbe(appGatewayName, resourceGroup, appName)
+            sleep(30)
+        } else {
+            echo "✅ Target pool ${targetPoolName} is healthy"
         }
         
         // Clear the source backend pool
@@ -855,41 +832,23 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
 
 
 
-def remediateUnhealthyBackend(String appGatewayName, String resourceGroup, String appName, String targetPoolName, String containerIp, String targetEnv) {
-    try {
-        echo "🔧 Starting remediation for unhealthy backend pool ${targetPoolName}"
+def recreateBackendPool(String appGatewayName, String resourceGroup, String appName, String targetPoolName, String containerIp) {
+    echo "💣 Recreating backend pool ${targetPoolName}"
+    
+    sh """
+        az network application-gateway address-pool delete \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${targetPoolName} || echo "Pool deleted"
         
-        // Step 1: Restart the container
-        def containerName = "${appName.replace('_', '')}-${targetEnv.toLowerCase()}-container"
-        echo "🔄 Restarting container: ${containerName}"
-        sh """
-            az container restart \\
-                --name ${containerName} \\
-                --resource-group ${resourceGroup}
-        """
-        
-        // Step 2: Wait for container to be ready
-        sleep(30)
-        
-        // Step 3: Recreate health probe
-        echo "🔧 Recreating health probe..."
-        createHealthProbe(appGatewayName, resourceGroup, appName)
-        
-        // Step 4: Update backend pool with fresh IP
-        echo "🔄 Refreshing backend pool with container IP..."
-        sh """
-            az network application-gateway address-pool update \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --name ${targetPoolName} \\
-                --set backendAddresses='[{"ipAddress":"${containerIp}"}]'
-        """
-        
-        echo "✅ Remediation steps completed for ${targetPoolName}"
-        
-    } catch (Exception e) {
-        echo "⚠️ Error during backend remediation: ${e.message}"
-    }
+        az network application-gateway address-pool create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${targetPoolName} \\
+            --servers ${containerIp}
+    """
+    
+    echo "✅ Backend pool ${targetPoolName} recreated"
 }
 
 def validateSwitchSuccess(String appGatewayName, String resourceGroup, String appName, String containerIp, String targetEnv) {
