@@ -613,6 +613,11 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         echo "🔄 Updating routing rules to point to new active environment..."
         createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
         
+        // Immediately recreate health probe to fix broken association
+        echo "🔍 Recreating health probe to restore association..."
+        sleep(5) // Brief pause for routing rule to settle
+        createHealthProbe(appGatewayName, resourceGroup, appName)
+        
         echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
         
         // Post-switch validation
@@ -628,6 +633,7 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
 def scaleDownOldEnvironment(Map config) {
     def appName = config.APP_NAME ?: "app_1"
     def resourceGroup = getResourceGroupName(config)
+    def appGatewayName = config.APP_GATEWAY_NAME ?: "blue-green-appgw"
     
     echo "DEBUG: scaleDownOldEnvironment received config keys: ${config.keySet()}"
     
