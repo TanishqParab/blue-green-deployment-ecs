@@ -192,6 +192,113 @@ def prepareRollback(Map config) {
         echo "⏳ Waiting for rollback container to stabilize..."
         sleep(45)
         
+        // Verify rollback container health
+        def rollbackHealth = checkContainerHealth(env.ROLLBACK_CONTAINER, resourceGroup)
+        if (!rollbackHealth) {
+            error "❌ Rollback container ${env.ROLLBACK_CONTAINER} is not healthy"
+        }
+        
+        echo "✅ Rollback preparation completed successfully"
+        
+    } catch (Exception e) {
+        error "❌ ACI rollback preparation failed: ${e.message}"
+    }
+}
+
+def executeRollback(Map config) {
+    echo "🔄 Executing ACI rollback..."
+    
+    try {
+        def resourceGroup = env.RESOURCE_GROUP
+        def appGatewayName = env.APP_GATEWAY_NAME
+        
+        // Get rollback container IP
+        def rollbackContainerIP = sh(
+            script: "az container show --name ${env.ROLLBACK_CONTAINER} --resource-group ${resourceGroup} --query 'ipAddress.ip' --output tsv",
+            returnStdout: true
+        ).trim()
+        
+        if (!rollbackContainerIP || rollbackContainerIP == 'null') {
+            error "❌ Could not get IP for rollback container ${env.ROLLBACK_CONTAINER}"
+        }
+        
+        echo "📍 Rollback container IP: ${rollbackContainerIP}"
+        
+        // Update rollback backend pool with container IP
+        sh """
+            az network application-gateway address-pool update \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${env.ROLLBACK_POOL_NAME} \\
+                --servers ${rollbackContainerIP}
+        """
+        
+        echo "⏳ Waiting for backend pool to update..."
+        sleep(30)
+        
+        // Verify backend pool health
+        def healthStatus = checkBackendPoolHealth(appGatewayName, resourceGroup, env.ROLLBACK_POOL_NAME)
+        if (!healthStatus) {
+            error "❌ Rollback backend pool ${env.ROLLBACK_POOL_NAME} is not healthy"
+        }
+        
+        // Clear current backend pool to complete rollback
+        sh """
+            az network application-gateway address-pool update \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${env.CURRENT_POOL_NAME} \\
+                --servers
+        """
+        
+        echo "✅ Rollback completed successfully"
+        echo "🎯 Traffic now routed to ${env.ROLLBACK_ENV} environment"
+        
+    } catch (Exception e) {
+        error "❌ ACI rollback execution failed: ${e.message}"
+    }
+}
+
+def checkContainerHealth(String containerName, String resourceGroup) {
+    try {
+        def containerState = sh(
+            script: "az container show --name ${containerName} --resource-group ${resourceGroup} --query 'instanceView.state' --output tsv",
+            returnStdout: true
+        ).trim()
+        
+        return containerState == 'Running'
+    } catch (Exception e) {
+        echo "⚠️ Health check failed for container ${containerName}: ${e.message}"
+        return false
+    }
+}
+
+def checkBackendPoolHealth(String appGatewayName, String resourceGroup, String poolName) {
+    try {
+        def healthOutput = sh(
+            script: "az network application-gateway show-backend-health --name ${appGatewayName} --resource-group ${resourceGroup} --query \"backendAddressPools[?name=='${poolName}'].backendHttpSettingsCollection[0].servers[0].health\" --output tsv",
+            returnStdout: true
+        ).trim()
+        
+        return healthOutput == 'Healthy'
+    } catch (Exception e) {
+        echo "⚠️ Backend pool health check failed for ${poolName}: ${e.message}"
+        return false
+    }
+}
+
+def getResourceGroupName(Map config) {
+    return config.resourceGroup ?: "rg-bluegreen-${config.appName ?: 'app1'}"
+}
+
+def getAppGatewayName(Map config) {
+    return config.appGatewayName ?: "appgw-bluegreen-${config.appName ?: 'app1'}"
+}
+
+def getRegistryName(Map config) {
+    return config.registryName ?: "acrbluegreen${config.appName?.replace('_', '') ?: 'app1'}"
+}
+        
         def containerState = sh(
             script: "az container show --name ${env.ROLLBACK_CONTAINER} --resource-group ${resourceGroup} --query instanceView.state --output tsv",
             returnStdout: true
