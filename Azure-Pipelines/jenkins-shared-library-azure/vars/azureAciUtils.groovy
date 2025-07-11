@@ -609,9 +609,9 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         echo "🔄 Updating routing rules to point to new active environment..."
         createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
         
-        // Restore health probe association that gets broken by routing rule recreation
-        echo "🔍 Restoring health probe association..."
-        restoreHealthProbeAssociation(appGatewayName, resourceGroup, appName)
+        // Recreate health probe to fix 502 errors (proven to work on second run)
+        echo "🔍 Recreating health probe to fix backend pool health..."
+        createHealthProbe(appGatewayName, resourceGroup, appName)
         
         echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
         
