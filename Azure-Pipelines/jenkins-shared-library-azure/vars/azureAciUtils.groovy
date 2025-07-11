@@ -613,6 +613,10 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         echo "🔄 Updating routing rules to point to new active environment..."
         createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
         
+        // Recreate health probe to restore association after routing rule recreation
+        echo "🔍 Recreating health probe to restore association..."
+        createHealthProbe(appGatewayName, resourceGroup, appName)
+        
         echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
         
         // Post-switch validation
