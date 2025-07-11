@@ -425,6 +425,10 @@ def updateApplication(Map config) {
 
         echo "✅ Container ${env.IDLE_ENV} is ready"
         
+        // Step 5: Ensure health probe exists (but don't update routing rules yet)
+        echo "🔍 Creating health probe for ${appName}..."
+        createHealthProbe("blue-green-appgw", resourceGroup, appName)
+        
         echo "📝 Note: Routing rules will be updated after traffic switch to point to active environment"
 
     } catch (Exception e) {
@@ -608,22 +612,6 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         // Update routing rules to point to the new active backend pool
         echo "🔄 Updating routing rules to point to new active environment..."
         createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
-        
-        // Wait for routing rule changes to propagate
-        echo "⏳ Waiting for routing rule changes to propagate..."
-        sleep(15)
-        
-        // Fix health probe association that gets broken by routing rule recreation
-        echo "🔍 Fixing health probe configuration..."
-        fixHealthProbeConfiguration(appGatewayName, resourceGroup, appName)
-        
-        // Wait for health probe changes to take effect
-        echo "⏳ Waiting for health probe changes to take effect..."
-        sleep(30)
-        
-        // Validate backend pool health
-        echo "🔍 Validating backend pool health..."
-        validateBackendPoolHealth(appGatewayName, resourceGroup, targetPoolName)
         
         echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
         
@@ -823,89 +811,7 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
     }
 }
 
-def fixHealthProbeConfiguration(String appGatewayName, String resourceGroup, String appName) {
-    try {
-        def probeName = "${appName}-health-probe"
-        def httpSettingsName = "${appName}-http-settings"
-        def appSuffix = appName.replace("app_", "")
-        def healthPath = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
-        
-        echo "🔍 Fixing health probe configuration for ${appName}"
-        
-        // Delete existing probe to ensure clean state
-        sh """
-        az network application-gateway probe delete \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${probeName} || echo "Probe may not exist"
-        """
-        
-        // Wait for deletion to complete
-        sleep(5)
-        
-        // Recreate health probe with correct configuration
-        sh """
-        az network application-gateway probe create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${probeName} \\
-            --protocol Http \\
-            --host 127.0.0.1 \\
-            --path ${healthPath} \\
-            --interval 30 \\
-            --timeout 10 \\
-            --threshold 3
-        """
-        
-        // Update HTTP settings to use the new probe
-        sh """
-        az network application-gateway http-settings update \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${httpSettingsName} \\
-            --probe ${probeName}
-        """
-        
-        echo "✅ Health probe configuration fixed for ${appName}"
-        
-    } catch (Exception e) {
-        echo "⚠️ Error fixing health probe configuration: ${e.message}"
-        // Fallback: try the original createHealthProbe method
-        echo "🔄 Attempting fallback health probe creation..."
-        createHealthProbe(appGatewayName, resourceGroup, appName)
-    }
-}
 
-def validateBackendPoolHealth(String appGatewayName, String resourceGroup, String poolName) {
-    try {
-        echo "🔍 Checking backend pool health for ${poolName}..."
-        
-        // Check backend pool health status
-        def healthStatus = sh(
-            script: """
-                az network application-gateway show-backend-health \\
-                    --name ${appGatewayName} \\
-                    --resource-group ${resourceGroup} \\
-                    --query "backendAddressPools[?name=='${poolName}'].backendHttpSettingsCollection[0].servers[0].health" \\
-                    --output tsv 2>/dev/null || echo "Unknown"
-            """,
-            returnStdout: true
-        ).trim()
-        
-        echo "📊 Backend pool ${poolName} health status: ${healthStatus}"
-        
-        if (healthStatus == "Healthy") {
-            echo "✅ Backend pool is healthy!"
-        } else {
-            echo "⚠️ Backend pool health status: ${healthStatus}"
-            echo "🔄 Waiting additional time for health probe to stabilize..."
-            sleep(30)
-        }
-        
-    } catch (Exception e) {
-        echo "⚠️ Could not validate backend pool health: ${e.message}"
-    }
-}
 
 def validateSwitchSuccess(String appGatewayName, String resourceGroup, String appName, String containerIp, String targetEnv) {
     try {
