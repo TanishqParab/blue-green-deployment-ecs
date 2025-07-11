@@ -782,7 +782,7 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
 def createRoutingRule(String appGatewayName, String resourceGroup, String appName, String backendPoolName) {
     try {
         def appSuffix = appName.replace("app_", "")
-        def ruleName = "path-rule-${appSuffix}"  // Match initial deployment naming
+        def ruleName = "${appName}-path-rule"  // Match what actually exists in Azure
         def httpSettingsName = "${appName}-http-settings"
         def pathPattern = "/app${appSuffix}*"
         
@@ -794,14 +794,14 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
         az network application-gateway url-path-map rule delete \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
-            --path-map-name app-path-map \\
+            --path-map-name main-path-map \\
             --name ${ruleName} || echo "Rule may not exist"
         
         # Recreate rule with new backend pool
         az network application-gateway url-path-map rule create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
-            --path-map-name app-path-map \\
+            --path-map-name main-path-map \\
             --name ${ruleName} \\
             --paths "${pathPattern}" \\
             --address-pool ${backendPoolName} \\
