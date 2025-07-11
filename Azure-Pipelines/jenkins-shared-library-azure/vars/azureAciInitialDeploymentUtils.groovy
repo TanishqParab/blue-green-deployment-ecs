@@ -252,10 +252,10 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
             --protocol Http \\
-            --host-name-from-http-settings true \\
-            --path / \\
+            --host 127.0.0.1 \\
+            --path /health \\
             --interval 30 \\
-            --timeout 30 \\
+            --timeout 10 \\
             --threshold 3 || echo "Probe may already exist"
         """
         
