@@ -425,10 +425,6 @@ def updateApplication(Map config) {
 
         echo "✅ Container ${env.IDLE_ENV} is ready"
         
-        // Step 5: Ensure health probe exists (but don't update routing rules yet)
-        echo "🔍 Creating health probe for ${appName}..."
-        createHealthProbe("blue-green-appgw", resourceGroup, appName)
-        
         echo "📝 Note: Routing rules will be updated after traffic switch to point to active environment"
 
     } catch (Exception e) {
@@ -613,9 +609,9 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         echo "🔄 Updating routing rules to point to new active environment..."
         createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
         
-        // Recreate health probe to restore association after routing rule recreation
-        echo "🔍 Recreating health probe to restore association..."
-        createHealthProbe(appGatewayName, resourceGroup, appName)
+        // Restore health probe association that gets broken by routing rule recreation
+        echo "🔍 Restoring health probe association..."
+        restoreHealthProbeAssociation(appGatewayName, resourceGroup, appName)
         
         echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
         
@@ -742,24 +738,20 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
     try {
         def probeName = "${appName}-health-probe"
         def httpSettingsName = "${appName}-http-settings"
-        def appSuffix = appName.replace("app_", "")
         
-        // Use correct health path based on app
-        def healthPath = appSuffix == "1" ? "/" : "/app${appSuffix}/health"
+        echo "🔍 Creating health probe ${probeName}"
         
-        echo "🔍 Creating health probe ${probeName} with path ${healthPath}"
-        
-        // Create health probe with correct path for each app
+        // Create health probe
         sh """
         az network application-gateway probe create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
             --protocol Http \\
-            --host 127.0.0.1 \\
-            --path ${healthPath} \\
+            --host-name-from-http-settings true \\
+            --path / \\
             --interval 30 \\
-            --timeout 10 \\
+            --timeout 30 \\
             --threshold 3 || echo "Probe may already exist"
         """
         
@@ -775,7 +767,7 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
             --probe ${probeName} || echo "HTTP settings may already exist"
         """
         
-        echo "✅ Created health probe and HTTP settings for ${appName} with path ${healthPath}"
+        echo "✅ Created health probe and HTTP settings for ${appName}"
         
     } catch (Exception e) {
         echo "⚠️ Error creating health probe: ${e.message}"
@@ -819,7 +811,28 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
     }
 }
 
-
+def restoreHealthProbeAssociation(String appGatewayName, String resourceGroup, String appName) {
+    try {
+        def httpSettingsName = "${appName}-http-settings"
+        def probeName = "${appName}-health-probe"
+        
+        echo "🔍 Restoring health probe association for ${httpSettingsName}"
+        
+        // Simply update the HTTP settings to re-associate with the existing probe
+        sh """
+        az network application-gateway http-settings update \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${httpSettingsName} \\
+            --probe ${probeName} || echo "Association may already exist"
+        """
+        
+        echo "✅ Health probe association restored"
+        
+    } catch (Exception e) {
+        echo "⚠️ Warning: Could not restore health probe association: ${e.message}"
+    }
+}
 
 def validateSwitchSuccess(String appGatewayName, String resourceGroup, String appName, String containerIp, String targetEnv) {
     try {
