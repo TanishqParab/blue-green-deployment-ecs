@@ -252,10 +252,10 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
             --protocol Http \\
-            --host 127.0.0.1 \\
-            --path /health \\
+            --host-name-from-http-settings true \\
+            --path / \\
             --interval 30 \\
-            --timeout 10 \\
+            --timeout 30 \\
             --threshold 3 || echo "Probe may already exist"
         """
         
@@ -335,27 +335,22 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
                 --gateway-name ${appGatewayName} \\
                 --resource-group ${resourceGroup} \\
                 --name ${pathMapName} \\
-                --rule-name ${ruleName} \\
-                --paths "${pathPattern}" \\
-                --address-pool ${backendPoolName} \\
-                --http-settings ${httpSettingsName} \\
                 --default-address-pool ${backendPoolName} \\
                 --default-http-settings ${httpSettingsName}
             """
-        } else {
-            // Add path rule to existing path map
-            sh """
-            az network application-gateway url-path-map rule create \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --path-map-name ${pathMapName} \\
-                --name ${ruleName} \\
-                --paths "${pathPattern}" \\
-                --address-pool ${backendPoolName} \\
-                --http-settings ${httpSettingsName} || echo "Rule may already exist"
-            """
         }
-
+        
+        // Add path rule to the path map
+        sh """
+        az network application-gateway url-path-map rule create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name ${pathMapName} \\
+            --name ${ruleName} \\
+            --paths "${pathPattern}" \\
+            --address-pool ${backendPoolName} \\
+            --http-settings ${httpSettingsName} || echo "Rule may already exist"
+        """
         
         // Update the main routing rule to use path-based routing
         def mainRuleName = "rule1"
