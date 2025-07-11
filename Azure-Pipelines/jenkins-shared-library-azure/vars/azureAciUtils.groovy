@@ -612,7 +612,18 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
             echo "⚠️ Target pool ${targetPoolName} is unhealthy (${healthStatus}). Recreating..."
             recreateBackendPool(appGatewayName, resourceGroup, appName, targetPoolName, containerIp)
             createHealthProbe(appGatewayName, resourceGroup, appName)
+            
+            // Wait and verify health after recreation
             sleep(30)
+            def newHealthStatus = sh(
+                script: "az network application-gateway show-backend-health --name ${appGatewayName} --resource-group ${resourceGroup} --query \"backendAddressPools[?name=='${targetPoolName}'].backendHttpSettingsCollection[0].servers[0].health\" --output tsv 2>/dev/null || echo 'Unknown'",
+                returnStdout: true
+            ).trim()
+            
+            if (newHealthStatus != 'Healthy') {
+                error "❌ Target pool ${targetPoolName} still unhealthy after recreation (${newHealthStatus}). Deployment aborted."
+            }
+            echo "✅ Target pool ${targetPoolName} is now healthy after recreation"
         } else {
             echo "✅ Target pool ${targetPoolName} is healthy"
         }
