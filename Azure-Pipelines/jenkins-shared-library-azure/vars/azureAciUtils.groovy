@@ -628,32 +628,12 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
 def scaleDownOldEnvironment(Map config) {
     def appName = config.APP_NAME ?: "app_1"
     def resourceGroup = getResourceGroupName(config)
-    def appGatewayName = config.APP_GATEWAY_NAME ?: "blue-green-appgw"
     
     echo "DEBUG: scaleDownOldEnvironment received config keys: ${config.keySet()}"
     
     // Skip scaling down for blue-green deployment - keep both environments running
     echo "📝 Skipping container scale down to maintain blue-green deployment capability"
     echo "📝 Both BLUE and GREEN containers will remain running for future deployments"
-    
-    // CRITICAL FIX: Replicate what the "second run" does to make backend pools healthy
-    echo "🔍 Final health probe fix (replicating second-run logic)..."
-    try {
-        // Wait for everything to settle
-        sleep(10)
-        
-        // Recreate health probe (this is what makes the second run work)
-        echo "🔍 Recreating health probe to ensure backend pool health..."
-        createHealthProbe(appGatewayName, resourceGroup, appName)
-        
-        // Wait for health probe to take effect
-        sleep(20)
-        
-        echo "✅ Final health probe fix completed - backend pools should now be healthy!"
-        
-    } catch (Exception e) {
-        echo "⚠️ Warning during final health probe fix: ${e.message}"
-    }
     
     // Optional: You can uncomment the code below if you want to scale down the idle environment
     /*
