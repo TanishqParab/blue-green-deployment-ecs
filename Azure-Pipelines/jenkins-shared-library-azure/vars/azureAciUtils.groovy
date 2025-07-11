@@ -743,36 +743,46 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
     try {
         def probeName = "${appName}-health-probe"
         def httpSettingsName = "${appName}-http-settings"
+        def appSuffix = appName.replace("app_", "")
+        def healthPath = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
         
-        echo "🔍 Creating health probe ${probeName}"
+        echo "🔍 Creating health probe ${probeName} with path ${healthPath}"
         
-        // Create health probe
+        // Delete existing probe first to ensure clean recreation
+        sh """
+        az network application-gateway probe delete \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${probeName} || echo "Probe may not exist"
+        """
+        
+        // Wait for deletion to complete
+        sleep(3)
+        
+        // Create health probe with correct configuration (matching what works in Azure)
         sh """
         az network application-gateway probe create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
             --protocol Http \\
-            --host-name-from-http-settings true \\
-            --path / \\
+            --host 127.0.0.1 \\
+            --path ${healthPath} \\
             --interval 30 \\
-            --timeout 30 \\
-            --threshold 3 || echo "Probe may already exist"
+            --timeout 10 \\
+            --threshold 3
         """
         
-        // Create HTTP settings with the probe
+        // Update HTTP settings to use the new probe
         sh """
-        az network application-gateway http-settings create \\
+        az network application-gateway http-settings update \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${httpSettingsName} \\
-            --port 80 \\
-            --protocol Http \\
-            --timeout 30 \\
-            --probe ${probeName} || echo "HTTP settings may already exist"
+            --probe ${probeName}
         """
         
-        echo "✅ Created health probe and HTTP settings for ${appName}"
+        echo "✅ Created health probe and updated HTTP settings for ${appName}"
         
     } catch (Exception e) {
         echo "⚠️ Error creating health probe: ${e.message}"
