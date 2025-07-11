@@ -33,7 +33,7 @@ def waitForServices(Map config) {
         returnStdout: true
     ).trim()
     
-    def healthEndpoint = "/app${appSuffix}/health"
+    def healthEndpoint = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
     
     echo "Application is accessible at: http://${appGatewayIp}${appSuffix == "1" ? "" : "/app" + appSuffix}"
     
@@ -425,7 +425,11 @@ def updateApplication(Map config) {
 
         echo "✅ Container ${env.IDLE_ENV} is ready"
         
-        echo "📝 Note: Health probes already exist from initial deployment. Routing rules will be updated after traffic switch to point to active environment"
+        // Step 5: Ensure health probe exists (but don't update routing rules yet)
+        echo "🔍 Creating health probe for ${appName}..."
+        createHealthProbe("blue-green-appgw", resourceGroup, appName)
+        
+        echo "📝 Note: Routing rules will be updated after traffic switch to point to active environment"
 
     } catch (Exception e) {
         echo "❌ Error occurred during ACI update:\\n${e}"
@@ -594,36 +598,6 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
                 --set backendAddresses='[{"ipAddress":"${containerIp}"}]'
         """
         
-        echo "⏳ Waiting for target backend pool to become healthy..."
-        sleep(45)
-        
-        // Ensure health probe exists and is correctly configured before validation
-        echo "🔍 Ensuring health probe is correctly configured..."
-        createHealthProbe(appGatewayName, resourceGroup, appName)
-        sleep(15)
-        
-        // Skip health check temporarily due to Azure CLI issues - just ensure backend pool has correct IP
-        echo "⚠️ Skipping health check due to Azure CLI inconsistencies. Validating backend pool IP instead..."
-        
-        def poolHasIP = sh(
-            script: "az network application-gateway address-pool show --name ${targetPoolName} --gateway-name ${appGatewayName} --resource-group ${resourceGroup} --query 'backendAddresses[0].ipAddress' --output tsv 2>/dev/null || echo 'None'",
-            returnStdout: true
-        ).trim()
-        
-        if (poolHasIP != containerIp) {
-            echo "⚠️ Backend pool IP mismatch. Expected: ${containerIp}, Got: ${poolHasIP}. Updating..."
-            sh """
-                az network application-gateway address-pool update \\
-                    --gateway-name ${appGatewayName} \\
-                    --resource-group ${resourceGroup} \\
-                    --name ${targetPoolName} \\
-                    --set backendAddresses='[{"ipAddress":"${containerIp}"}]'
-            """
-            echo "✅ Backend pool IP updated to ${containerIp}"
-        } else {
-            echo "✅ Backend pool has correct IP (${poolHasIP}). Proceeding with traffic switch."
-        }
-        
         // Clear the source backend pool
         sh """
             az network application-gateway address-pool update \\
@@ -764,31 +738,21 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
     try {
         def probeName = "${appName}-health-probe"
         def httpSettingsName = "${appName}-http-settings"
-        def appSuffix = appName.replace("app_", "")
-        def healthPath = "/app${appSuffix}/health"
         
-        echo "🔍 Creating health probe ${probeName} with path ${healthPath}"
+        echo "🔍 Creating health probe ${probeName}"
         
-        // Delete existing probe first
-        sh """
-        az network application-gateway probe delete \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${probeName} || echo "Probe deleted"
-        """
-        
-        // Create health probe with correct path
+        // Create health probe
         sh """
         az network application-gateway probe create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
             --protocol Http \\
-            --host 127.0.0.1 \\
-            --path ${healthPath} \\
+            --host-name-from-http-settings true \\
+            --path / \\
             --interval 30 \\
-            --timeout 10 \\
-            --threshold 3
+            --timeout 30 \\
+            --threshold 3 || echo "Probe may already exist"
         """
         
         // Create HTTP settings with the probe
@@ -800,10 +764,10 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
             --port 80 \\
             --protocol Http \\
             --timeout 30 \\
-            --probe ${probeName} || echo "HTTP settings updated"
+            --probe ${probeName} || echo "HTTP settings may already exist"
         """
         
-        echo "✅ Created health probe and HTTP settings for ${appName} with path ${healthPath}"
+        echo "✅ Created health probe and HTTP settings for ${appName}"
         
     } catch (Exception e) {
         echo "⚠️ Error creating health probe: ${e.message}"
@@ -848,25 +812,6 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
 }
 
 
-
-def recreateBackendPool(String appGatewayName, String resourceGroup, String appName, String targetPoolName, String containerIp) {
-    echo "💣 Recreating backend pool ${targetPoolName}"
-    
-    sh """
-        az network application-gateway address-pool delete \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${targetPoolName} || echo "Pool deleted"
-        
-        az network application-gateway address-pool create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${targetPoolName} \\
-            --servers ${containerIp}
-    """
-    
-    echo "✅ Backend pool ${targetPoolName} recreated"
-}
 
 def validateSwitchSuccess(String appGatewayName, String resourceGroup, String appName, String containerIp, String targetEnv) {
     try {
