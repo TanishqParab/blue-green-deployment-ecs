@@ -742,10 +742,14 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
     try {
         def probeName = "${appName}-health-probe"
         def httpSettingsName = "${appName}-http-settings"
+        def appSuffix = appName.replace("app_", "")
         
-        echo "🔍 Creating health probe ${probeName}"
+        // Use correct health path based on app
+        def healthPath = appSuffix == "1" ? "/" : "/app${appSuffix}/health"
         
-        // Create health probe with existing compatible configuration
+        echo "🔍 Creating health probe ${probeName} with path ${healthPath}"
+        
+        // Create health probe with correct path for each app
         sh """
         az network application-gateway probe create \\
             --gateway-name ${appGatewayName} \\
@@ -753,7 +757,7 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
             --name ${probeName} \\
             --protocol Http \\
             --host 127.0.0.1 \\
-            --path /health \\
+            --path ${healthPath} \\
             --interval 30 \\
             --timeout 10 \\
             --threshold 3 || echo "Probe may already exist"
@@ -771,7 +775,7 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
             --probe ${probeName} || echo "HTTP settings may already exist"
         """
         
-        echo "✅ Created health probe and HTTP settings for ${appName}"
+        echo "✅ Created health probe and HTTP settings for ${appName} with path ${healthPath}"
         
     } catch (Exception e) {
         echo "⚠️ Error creating health probe: ${e.message}"
