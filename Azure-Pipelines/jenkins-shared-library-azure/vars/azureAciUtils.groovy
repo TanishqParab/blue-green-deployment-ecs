@@ -425,7 +425,11 @@ def updateApplication(Map config) {
 
         echo "✅ Container ${env.IDLE_ENV} is ready"
         
-        echo "📝 Note: Health probe already exists from initial deployment. Routing rules will be updated after traffic switch to point to active environment"
+        // Step 5: Ensure health probe exists (but don't update routing rules yet)
+        echo "🔍 Creating health probe for ${appName}..."
+        createHealthProbe("blue-green-appgw", resourceGroup, appName)
+        
+        echo "📝 Note: Routing rules will be updated after traffic switch to point to active environment"
 
     } catch (Exception e) {
         echo "❌ Error occurred during ACI update:\\n${e}"
