@@ -301,44 +301,14 @@ def executeAzureAciRollback(Map config) {
     
     echo "🎯 Rollback container IP: ${rollbackContainerIp}"
     
-    // SMART ROLLBACK STRATEGY: Query routing rules to see which pool they point to
-    def routingRuleName = "${appName}-path-rule"
-    def routingRuleBackendPool = ""
+    // TRUE BLUE-GREEN ROLLBACK STRATEGY: Switch to opposite pool
+    def targetPoolForRollback = env.ROLLBACK_POOL_NAME  // This is the opposite pool
+    def sourcePoolToClear = env.CURRENT_POOL_NAME       // This is the current active pool
     
-    try {
-        def routingRuleBackendPoolName = sh(
-            script: """
-                az network application-gateway url-path-map rule show \\
-                    --gateway-name ${appGatewayName} \\
-                    --resource-group ${resourceGroup} \\
-                    --path-map-name main-path-map \\
-                    --name ${routingRuleName} \\
-                    --query 'backendAddressPool.id' --output tsv 2>/dev/null
-            """,
-            returnStdout: true
-        ).trim()
-        
-        if (routingRuleBackendPoolName && routingRuleBackendPoolName != 'null' && !routingRuleBackendPoolName.isEmpty()) {
-            routingRuleBackendPool = routingRuleBackendPoolName.contains('/') ? 
-                routingRuleBackendPoolName.split('/').last() : routingRuleBackendPoolName
-        }
-    } catch (Exception e) {
-        echo "⚠️ Routing rule query failed: ${e.message}"
-    }
-    
-    if (!routingRuleBackendPool || routingRuleBackendPool.isEmpty()) {
-        echo "⚠️ Could not determine routing rule backend pool. Using current pool as fallback."
-        routingRuleBackendPool = env.CURRENT_POOL_NAME
-    }
-    
-    echo "🔍 Routing rule ${routingRuleName} currently points to: ${routingRuleBackendPool}"
-    
-    // STRATEGY: Put rollback container in the pool that routing rules already point to
-    def targetPoolForRollback = routingRuleBackendPool
-    
-    echo "💡 ROLLBACK STRATEGY: Moving rollback container (${rollbackContainerIp}) to pool ${targetPoolForRollback}"
-    echo "💡 This ensures routing rules point to the pool with the rollback container!"
-    echo "💡 Backend health will show ${targetPoolForRollback} as healthy with rollback container"
+    echo "🔄 TRUE BLUE-GREEN ROLLBACK STRATEGY:"
+    echo "🔄 Current Active Pool: ${sourcePoolToClear} (will be cleared)"
+    echo "🔄 Target Rollback Pool: ${targetPoolForRollback} (will receive rollback container)"
+    echo "💡 This implements true blue-green switching between pools"
     
     // Pre-validation: Test rollback container directly before backend pool update
     echo "🔍 Pre-validation: Testing rollback container health before backend pool update..."
@@ -368,8 +338,8 @@ def executeAzureAciRollback(Map config) {
         echo "⚠️ Warning: Rollback container health checks failed, but proceeding with backend pool update"
     }
     
-    // Move rollback container IP to the pool that routing rules point to
-    echo "🔄 Updating backend pool with rollback container IP..."
+    // TRUE BLUE-GREEN ROLLBACK: Switch traffic between pools
+    echo "🔄 Step 1: Adding rollback container to target pool (${targetPoolForRollback})..."
     sh """
         az network application-gateway address-pool update \\
             --gateway-name ${appGatewayName} \\
@@ -378,140 +348,47 @@ def executeAzureAciRollback(Map config) {
             --set backendAddresses='[{"ipAddress":"${rollbackContainerIp}"}]'
     """
     
+    echo "🔄 Step 2: Clearing current active pool (${sourcePoolToClear})..."
+    sh """
+        az network application-gateway address-pool update \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${sourcePoolToClear} \\
+            --set backendAddresses='[]'
+    """
+    
+    echo "🔄 Step 3: Updating routing rules to point to rollback pool..."
+    def routingRuleName = "${appName}-path-rule"
+    def appSuffix = appName.replace("app_", "")
+    def httpSettingsName = "${appName}-http-settings"
+    def pathPattern = "/app${appSuffix}*"
+    
+    sh """
+        # Delete existing rule
+        az network application-gateway url-path-map rule delete \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name main-path-map \\
+            --name ${routingRuleName} || echo "Rule may not exist"
+        
+        # Recreate rule pointing to rollback pool
+        az network application-gateway url-path-map rule create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name main-path-map \\
+            --name ${routingRuleName} \\
+            --paths "${pathPattern}" \\
+            --address-pool ${targetPoolForRollback} \\
+            --http-settings ${httpSettingsName}
+    """
+    
     echo "✅✅✅ Traffic successfully switched to rollback container (${rollbackContainerIp}) in ${targetPoolForRollback}!"
     echo "🎯 Routing rules unchanged - they already point to ${targetPoolForRollback}"
     echo "📊 Backend health will show ${targetPoolForRollback} as the active pool with rollback container"
     
-    // Wait for backend pool to stabilize with rollback container IP
-    echo "⏳ Waiting for backend pool to stabilize with rollback container IP..."
-    sleep(30) // Initial wait for Azure to process the change
-    
-    // COMPREHENSIVE DEBUGGING: Monitor backend pool health status
-    echo "🔍 DEBUGGING: Monitoring backend pool health status..."
-    def healthCheckPassed = false
-    def healthCheckRetries = 6 // 6 attempts over 3 minutes
-    
-    for (int i = 0; i < healthCheckRetries; i++) {
-        try {
-            // Get detailed backend health information
-            def poolHealthDetails = sh(
-                script: """
-                    az network application-gateway show-backend-health \\
-                        --name ${appGatewayName} \\
-                        --resource-group ${resourceGroup} \\
-                        --query "backendAddressPools[?name=='${targetPoolForRollback}']" \\
-                        --output json 2>/dev/null || echo '[]'
-                """,
-                returnStdout: true
-            ).trim()
-            
-            echo "🔍 DEBUGGING: Full backend health details (attempt ${i + 1}):"
-            echo "${poolHealthDetails}"
-            
-            // Test direct container connectivity
-            echo "🔍 DEBUGGING: Testing direct container connectivity..."
-            def appSuffix = appName.replace("app_", "")
-            def testPath = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
-            
-            try {
-                sh """
-                    echo "Testing: http://${rollbackContainerIp}${testPath}"
-                    curl -v --connect-timeout 5 --max-time 10 http://${rollbackContainerIp}${testPath} || echo "Direct container test failed"
-                """
-            } catch (Exception directTestError) {
-                echo "🔍 DEBUGGING: Direct container test error: ${directTestError.message}"
-            }
-            
-            // Check health probe configuration
-            echo "🔍 DEBUGGING: Checking health probe configuration..."
-            def probeConfig = sh(
-                script: """
-                    az network application-gateway probe show \\
-                        --gateway-name ${appGatewayName} \\
-                        --resource-group ${resourceGroup} \\
-                        --name ${appName}-health-probe \\
-                        --output json 2>/dev/null || echo '{}'
-                """,
-                returnStdout: true
-            ).trim()
-            
-            echo "🔍 DEBUGGING: Health probe configuration:"
-            echo "${probeConfig}"
-            
-            // Check HTTP settings
-            echo "🔍 DEBUGGING: Checking HTTP settings..."
-            def httpSettings = sh(
-                script: """
-                    az network application-gateway http-settings show \\
-                        --gateway-name ${appGatewayName} \\
-                        --resource-group ${resourceGroup} \\
-                        --name ${appName}-http-settings \\
-                        --output json 2>/dev/null || echo '{}'
-                """,
-                returnStdout: true
-            ).trim()
-            
-            echo "🔍 DEBUGGING: HTTP settings configuration:"
-            echo "${httpSettings}"
-            
-            // Extract simple health status
-            def poolHealth = sh(
-                script: """
-                    az network application-gateway show-backend-health \\
-                        --name ${appGatewayName} \\
-                        --resource-group ${resourceGroup} \\
-                        --query "backendAddressPools[?name=='${targetPoolForRollback}'].backendHttpSettingsCollection[0].servers[0].health" \\
-                        --output tsv 2>/dev/null || echo "Unknown"
-                """,
-                returnStdout: true
-            ).trim()
-            
-            echo "📊 DEBUGGING: Backend pool health status (attempt ${i + 1}): ${poolHealth}"
-            
-            if (poolHealth == "Healthy") {
-                healthCheckPassed = true
-                echo "✅ Backend pool is healthy!"
-                break
-            } else {
-                echo "⏳ Backend pool not yet healthy (${poolHealth}), waiting 30 seconds..."
-                sleep(30)
-            }
-        } catch (Exception e) {
-            echo "⚠️ DEBUGGING: Health check query failed: ${e.message}"
-            sleep(30)
-        }
-    }
-    
-    if (!healthCheckPassed) {
-        echo "⚠️ DEBUGGING: Backend pool health check did not pass within expected time"
-        echo "🔍 DEBUGGING: Final diagnostic information:"
-        
-        // Final container status check
-        try {
-            def containerStatus = sh(
-                script: "az container show --name ${env.ROLLBACK_CONTAINER} --resource-group ${resourceGroup} --query '{State:instanceView.state,RestartCount:instanceView.restartCount,Image:containers[0].image}' --output json",
-                returnStdout: true
-            ).trim()
-            echo "🔍 DEBUGGING: Final container status: ${containerStatus}"
-        } catch (Exception e) {
-            echo "⚠️ DEBUGGING: Could not get container status: ${e.message}"
-        }
-        
-        // Final backend pool status
-        try {
-            def finalPoolStatus = sh(
-                script: "az network application-gateway address-pool show --gateway-name ${appGatewayName} --resource-group ${resourceGroup} --name ${targetPoolForRollback} --output json",
-                returnStdout: true
-            ).trim()
-            echo "🔍 DEBUGGING: Final backend pool status: ${finalPoolStatus}"
-        } catch (Exception e) {
-            echo "⚠️ DEBUGGING: Could not get backend pool status: ${e.message}"
-        }
-    }
-    
-    // DO NOT update health probes or routing rules - this preserves health probe associations!
-    echo "📊 Preserving routing rules and health probe associations for rollback"
-    echo "✅ No routing rule changes needed - rollback traffic flows automatically!"
+    // Wait for Application Gateway to propagate changes
+    echo "⏳ Waiting for Application Gateway to propagate rollback changes..."
+    sleep(30)
     
     // Validate rollback deployment
     validateRollbackSuccess(appGatewayName, resourceGroup, appName, rollbackContainerIp)
