@@ -141,7 +141,7 @@ def prepareRollback(Map config) {
         }
         
         if (!rollbackTag) {
-            // Find the most recent rollback image or use previous version
+            // Get all images sorted by time (newest first)
             def allImages = sh(
                 script: "az acr repository show-tags --name ${registryName} --repository ${imageName} --orderby time_desc --output json",
                 returnStdout: true
@@ -152,15 +152,29 @@ def prepareRollback(Map config) {
                 error "❌ Not enough images for rollback. Need at least 2 versions."
             }
             
-            // Use the most recent rollback tag, or second newest image as fallback
-            def rollbackCandidates = imagesJson.findAll { it.contains('rollback') }
-            if (rollbackCandidates.size() > 0) {
-                rollbackTag = rollbackCandidates[0] // Most recent rollback
-                echo "✅ Using most recent rollback image: ${rollbackTag}"
+            echo "🔍 Available images (newest first): ${imagesJson.take(5)}"
+            
+            // Find the immediate previous version (not current latest)
+            // Skip the current latest tag and any rollback tags to find the actual previous version
+            def currentLatestTag = "${appName}-latest"
+            def previousVersionTag = null
+            
+            for (int i = 0; i < imagesJson.size(); i++) {
+                def tag = imagesJson[i]
+                // Skip current latest tag and rollback tags to find the actual previous version
+                if (tag != currentLatestTag && !tag.contains('rollback')) {
+                    previousVersionTag = tag
+                    break
+                }
+            }
+            
+            if (previousVersionTag) {
+                rollbackTag = previousVersionTag
+                echo "✅ Using immediate previous version as rollback: ${rollbackTag}"
             } else {
-                // Use second newest image as rollback
+                // Fallback: use second newest image
                 rollbackTag = imagesJson[1]
-                echo "✅ Using previous version as rollback: ${rollbackTag}"
+                echo "⚠️ Fallback: Using second newest image as rollback: ${rollbackTag}"
             }
         }
         
