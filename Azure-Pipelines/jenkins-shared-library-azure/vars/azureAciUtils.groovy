@@ -609,13 +609,11 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         
         echo "✅✅✅ Traffic successfully switched from ${currentEnv} to ${actualTargetEnv} (${containerIp})!"
         
-        // Recreate health infrastructure to ensure correct probe configuration
-        echo "🔍 Recreating health infrastructure from scratch..."
-        recreateHealthInfrastructure(appGatewayName, resourceGroup, appName)
+        // Update routing rules to point to the new active backend pool
+        echo "🔄 Updating routing rules to point to new active environment..."
+        createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
         
-        // Skip routing rule updates - they break health probe associations and aren't needed
-        // Traffic switching is handled by the backend pool updates above
-        echo "✅ Traffic switch completed - routing rules preserved to maintain health probe associations"
+        echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
         
         // Post-switch validation
         echo "🔍 Performing post-switch validation..."
@@ -785,46 +783,27 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
         
         echo "📝 Updating existing path rule ${existingRuleName} to point to ${backendPoolName}"
         
-        // Try to update the rule in place first (this preserves health probe associations)
-        def updateSuccess = false
-        try {
-            sh """
-            az network application-gateway url-path-map rule update \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --path-map-name main-path-map \\
-                --name ${existingRuleName} \\
-                --address-pool ${backendPoolName}
-            """
-            updateSuccess = true
-            echo "✅ Updated path rule in place (preserving health probe associations)"
-        } catch (Exception updateError) {
-            echo "⚠️ In-place update failed: ${updateError.message}"
-            echo "🔄 Falling back to delete/recreate approach..."
-        }
+        // Delete and recreate the path rule to update it
+        sh """
+        # Delete existing rule
+        az network application-gateway url-path-map rule delete \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name main-path-map \\
+            --name ${existingRuleName} || echo "Rule may not exist"
         
-        // Only if in-place update fails, fall back to delete/recreate
-        if (!updateSuccess) {
-            sh """
-            # Delete existing rule
-            az network application-gateway url-path-map rule delete \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --path-map-name main-path-map \\
-                --name ${existingRuleName} || echo "Rule may not exist"
-            
-            # Recreate rule with new backend pool
-            az network application-gateway url-path-map rule create \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --path-map-name main-path-map \\
-                --name ${existingRuleName} \\
-                --paths "${pathPattern}" \\
-                --address-pool ${backendPoolName} \\
-                --http-settings ${httpSettingsName}
-            """
-            echo "✅ Recreated path rule to point to ${backendPoolName}"
-        }
+        # Recreate rule with new backend pool
+        az network application-gateway url-path-map rule create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name main-path-map \\
+            --name ${existingRuleName} \\
+            --paths "${pathPattern}" \\
+            --address-pool ${backendPoolName} \\
+            --http-settings ${httpSettingsName}
+        """
+        
+        echo "✅ Updated path rule to point to ${backendPoolName}"
         
     } catch (Exception e) {
         echo "⚠️ Error updating routing rule: ${e.message}"
@@ -832,47 +811,7 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
     }
 }
 
-def recreateHealthInfrastructure(String appGatewayName, String resourceGroup, String appName) {
-    try {
-        def probeName = "${appName}-health-probe"
-        def httpSettingsName = "${appName}-http-settings"
-        def appSuffix = appName.replace("app_", "")
-        def healthPath = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
-        
-        echo "🆕 Creating/updating health probe and HTTP settings with correct configuration..."
-        
-        // Create or update health probe with correct configuration
-        sh """
-        az network application-gateway probe create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${probeName} \\
-            --protocol Http \\
-            --host 127.0.0.1 \\
-            --path ${healthPath} \\
-            --interval 30 \\
-            --timeout 10 \\
-            --threshold 3 || echo "Probe may already exist, updating..."
-        """
-        
-        // Create or update HTTP settings with the probe
-        sh """
-        az network application-gateway http-settings create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${httpSettingsName} \\
-            --port 80 \\
-            --protocol Http \\
-            --timeout 30 \\
-            --probe ${probeName} || echo "HTTP settings may already exist, updating..."
-        """
-        
-        echo "✅ Health infrastructure created/updated successfully!"
-        
-    } catch (Exception e) {
-        echo "⚠️ Error recreating health infrastructure: ${e.message}"
-    }
-}
+
 
 def validateSwitchSuccess(String appGatewayName, String resourceGroup, String appName, String containerIp, String targetEnv) {
     try {
