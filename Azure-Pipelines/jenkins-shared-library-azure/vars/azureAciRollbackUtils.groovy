@@ -141,7 +141,7 @@ def prepareRollback(Map config) {
         }
         
         if (!rollbackTag) {
-            // Create rollback image from previous version
+            // Find the most recent rollback image or use previous version
             def allImages = sh(
                 script: "az acr repository show-tags --name ${registryName} --repository ${imageName} --orderby time_desc --output json",
                 returnStdout: true
@@ -152,37 +152,22 @@ def prepareRollback(Map config) {
                 error "❌ Not enough images for rollback. Need at least 2 versions."
             }
             
-            // Use second newest image as rollback
-            def previousTag = imagesJson[1]
-            rollbackTag = "${appName}-rollback-${new Date().format('yyyyMMdd-HHmmss')}"
-            
-            def acrLoginServer = sh(
-                script: "az acr show --name ${registryName} --resource-group ${resourceGroup} --query loginServer --output tsv",
-                returnStdout: true
-            ).trim()
-            
-            sh "az acr import --name ${registryName} --source ${acrLoginServer}/${imageName}:${previousTag} --image ${imageName}:${rollbackTag}"
-            echo "✅ Created rollback image: ${rollbackTag}"
+            // Use the most recent rollback tag, or second newest image as fallback
+            def rollbackCandidates = imagesJson.findAll { it.contains('rollback') }
+            if (rollbackCandidates.size() > 0) {
+                rollbackTag = rollbackCandidates[0] // Most recent rollback
+                echo "✅ Using most recent rollback image: ${rollbackTag}"
+            } else {
+                // Use second newest image as rollback
+                rollbackTag = imagesJson[1]
+                echo "✅ Using previous version as rollback: ${rollbackTag}"
+            }
         }
         
         env.ROLLBACK_IMAGE = "${registryName}.azurecr.io/${imageName}:${rollbackTag}"
         
-        // Deploy rollback application to the idle environment
-        echo "🔧 Deploying rollback application to ${env.ROLLBACK_ENV} environment..."
-        
-        def dockerDir = "./blue-green-deployment/modules/azure/aci/scripts"
-        def rollbackImageTag = "${appName}-rollback-${new Date().format('yyyyMMdd-HHmmss')}"
-        
-        sh """
-            az acr login --name ${registryName}
-            cd ${dockerDir}
-            docker build -t ${imageName}:${rollbackImageTag} --build-arg APP_NAME=${appSuffix} .
-            docker tag ${imageName}:${rollbackImageTag} ${registryName}.azurecr.io/${imageName}:${rollbackImageTag}
-            docker push ${registryName}.azurecr.io/${imageName}:${rollbackImageTag}
-        """
-        
-        env.ROLLBACK_IMAGE = "${registryName}.azurecr.io/${imageName}:${rollbackImageTag}"
-        echo "✅ Rollback application built and pushed: ${env.ROLLBACK_IMAGE}"
+        echo "✅ Using existing rollback image: ${env.ROLLBACK_IMAGE}"
+        echo "🔄 This image contains the PREVIOUS version of the application"
         
         // Recreate the rollback container with rollback image (same as switch deployment)
         echo "🔄 Recreating ${env.ROLLBACK_ENV} container (${env.ROLLBACK_CONTAINER}) with rollback application..."
