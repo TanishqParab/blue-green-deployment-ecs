@@ -125,22 +125,11 @@ def prepareRollback(Map config) {
         // Find and deploy previous image version
         def imageName = "${appName.replace('_', '')}-image"
         
-        // Get rollback image (look for rollback tags first)
-        def rollbackImages = sh(
-            script: "az acr repository show-tags --name ${registryName} --repository ${imageName} --query '[?contains(@, `rollback`)]' --output json 2>/dev/null || echo '[]'",
-            returnStdout: true
-        ).trim()
-        
+        // ALWAYS find the immediate previous version (ignore old rollback tags)
         def rollbackTag
-        if (rollbackImages != '[]') {
-            def rollbackJson = readJSON text: rollbackImages
-            if (rollbackJson.size() > 0) {
-                rollbackTag = rollbackJson[0] // Use most recent rollback tag
-                echo "✅ Found existing rollback image: ${rollbackTag}"
-            }
-        }
         
-        if (!rollbackTag) {
+        // Get all images sorted by time (newest first) to find immediate previous version
+        echo "🔍 Finding immediate previous version (ignoring old rollback tags)..."
             // Get all images sorted by time (newest first)
             def allImages = sh(
                 script: "az acr repository show-tags --name ${registryName} --repository ${imageName} --orderby time_desc --output json",
@@ -152,30 +141,44 @@ def prepareRollback(Map config) {
                 error "❌ Not enough images for rollback. Need at least 2 versions."
             }
             
-            echo "🔍 Available images (newest first): ${imagesJson.take(5)}"
-            
-            // Find the immediate previous version (not current latest)
-            // Skip the current latest tag and any rollback tags to find the actual previous version
-            def currentLatestTag = "${appName}-latest"
-            def previousVersionTag = null
-            
-            for (int i = 0; i < imagesJson.size(); i++) {
-                def tag = imagesJson[i]
-                // Skip current latest tag and rollback tags to find the actual previous version
-                if (tag != currentLatestTag && !tag.contains('rollback')) {
+        echo "🔍 Available images (newest first): ${imagesJson.take(5)}"
+        
+        // Find the immediate previous version by looking for the second occurrence of app_X-latest
+        // This ensures we get the actual previous version, not old rollback tags
+        def currentLatestTag = "${appName}-latest"
+        def latestTagCount = 0
+        def previousVersionTag = null
+        
+        for (int i = 0; i < imagesJson.size(); i++) {
+            def tag = imagesJson[i]
+            if (tag == currentLatestTag) {
+                latestTagCount++
+                if (latestTagCount == 2) {
+                    // This is the second occurrence of app_X-latest = previous version
                     previousVersionTag = tag
+                    echo "🔍 Found second occurrence of ${currentLatestTag} at index ${i}"
                     break
                 }
             }
-            
-            if (previousVersionTag) {
-                rollbackTag = previousVersionTag
-                echo "✅ Using immediate previous version as rollback: ${rollbackTag}"
-            } else {
-                // Fallback: use second newest image
-                rollbackTag = imagesJson[1]
-                echo "⚠️ Fallback: Using second newest image as rollback: ${rollbackTag}"
+        }
+        
+        if (previousVersionTag) {
+            rollbackTag = previousVersionTag
+            echo "✅ Using immediate previous version (second ${currentLatestTag}): ${rollbackTag}"
+        } else {
+            // Fallback: use second newest non-rollback image
+            for (int i = 1; i < imagesJson.size(); i++) {
+                def tag = imagesJson[i]
+                if (!tag.contains('rollback')) {
+                    rollbackTag = tag
+                    echo "⚠️ Fallback: Using second newest non-rollback image: ${rollbackTag}"
+                    break
+                }
             }
+        }
+        
+        if (!rollbackTag) {
+            error "❌ Could not find suitable rollback image"
         }
         
         env.ROLLBACK_IMAGE = "${registryName}.azurecr.io/${imageName}:${rollbackTag}"
