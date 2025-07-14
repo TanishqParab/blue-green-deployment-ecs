@@ -593,19 +593,28 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
 
         // Query routing rules to see which backend pool they currently point to
         def routingRuleName = "${appName}-path-rule"
-        def routingRuleBackendPool = sh(
+        def routingRuleBackendPoolFull = sh(
             script: """
                 az network application-gateway url-path-map rule show \\
                     --gateway-name ${appGatewayName} \\
                     --resource-group ${resourceGroup} \\
                     --path-map-name main-path-map \\
                     --name ${routingRuleName} \\
-                    --query 'backendAddressPool.id' --output tsv 2>/dev/null | sed 's/.*\///'
+                    --query 'backendAddressPool.id' --output tsv 2>/dev/null || echo 'MISSING'
             """,
             returnStdout: true
         ).trim()
         
+        // Extract pool name from full path (e.g., "/subscriptions/.../app_2-blue-pool" -> "app_2-blue-pool")
+        def routingRuleBackendPool = routingRuleBackendPoolFull.contains('/') ? 
+            routingRuleBackendPoolFull.split('/').last() : routingRuleBackendPoolFull
+        
         echo "🔍 Routing rule ${routingRuleName} currently points to: ${routingRuleBackendPool}"
+        
+        if (routingRuleBackendPool == 'MISSING' || !routingRuleBackendPool) {
+            echo "⚠️ Could not determine routing rule backend pool. Using source pool as fallback."
+            routingRuleBackendPool = sourcePoolName
+        }
         
         // Check which pools currently have targets (backend addresses)
         def bluePoolHasTargets = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
