@@ -425,9 +425,9 @@ def updateApplication(Map config) {
 
         echo "✅ Container ${env.IDLE_ENV} is ready"
         
-        // Step 5: Ensure health probe exists (but don't update routing rules yet)
-        echo "🔍 Creating health probe for ${appName}..."
-        createHealthProbe("blue-green-appgw", resourceGroup, appName)
+        // DO NOT create or update health probes - this breaks existing associations!
+        // The health probes and HTTP settings are already correctly configured by Terraform
+        echo "📊 Preserving existing health infrastructure to maintain probe associations"
         
         echo "📝 Note: Routing rules will be updated after traffic switch to point to active environment"
 
@@ -641,7 +641,35 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         echo "💡 This ensures routing rules point to the pool with the new container!"
         echo "💡 Backend health will show ${targetPoolForNewContainer} as healthy with new container"
         
+        // Pre-validation: Test new container directly before backend pool update
+        echo "🔍 Pre-validation: Testing new container health before backend pool update..."
+        def testPath = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
+        
+        def containerHealthy = false
+        def maxRetries = 3
+        for (int i = 0; i < maxRetries; i++) {
+            try {
+                sh """
+                    curl -f --connect-timeout 5 --max-time 10 http://${newContainerIp}${testPath}
+                """
+                containerHealthy = true
+                echo "✅ Container health check passed (attempt ${i + 1})"
+                break
+            } catch (Exception e) {
+                echo "⚠️ Container health check failed (attempt ${i + 1}): ${e.message}"
+                if (i < maxRetries - 1) {
+                    echo "⏳ Waiting 10 seconds before retry..."
+                    sleep(10)
+                }
+            }
+        }
+        
+        if (!containerHealthy) {
+            echo "⚠️ Warning: Container health checks failed, but proceeding with backend pool update"
+        }
+        
         // Move new container IP to the pool that routing rules point to
+        echo "🔄 Updating backend pool with new container IP..."
         sh """
             az network application-gateway address-pool update \\
                 --gateway-name ${appGatewayName} \\
@@ -656,7 +684,45 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         
         // Wait for backend pool to stabilize with new container IP
         echo "⏳ Waiting for backend pool to stabilize with new container IP..."
-        sleep(60) // Give time for Azure to recognize the new container
+        sleep(30) // Initial wait for Azure to process the change
+        
+        // Monitor backend pool health status
+        echo "🔍 Monitoring backend pool health status..."
+        def healthCheckPassed = false
+        def healthCheckRetries = 6 // 6 attempts over 3 minutes
+        
+        for (int i = 0; i < healthCheckRetries; i++) {
+            try {
+                def poolHealth = sh(
+                    script: """
+                        az network application-gateway show-backend-health \\
+                            --name ${appGatewayName} \\
+                            --resource-group ${resourceGroup} \\
+                            --query "backendAddressPools[?name=='${targetPoolForNewContainer}'].backendHttpSettingsCollection[0].servers[0].health" \\
+                            --output tsv 2>/dev/null || echo "Unknown"
+                    """,
+                    returnStdout: true
+                ).trim()
+                
+                echo "📊 Backend pool health status (attempt ${i + 1}): ${poolHealth}"
+                
+                if (poolHealth == "Healthy") {
+                    healthCheckPassed = true
+                    echo "✅ Backend pool is healthy!"
+                    break
+                } else {
+                    echo "⏳ Backend pool not yet healthy, waiting 30 seconds..."
+                    sleep(30)
+                }
+            } catch (Exception e) {
+                echo "⚠️ Health check query failed: ${e.message}"
+                sleep(30)
+            }
+        }
+        
+        if (!healthCheckPassed) {
+            echo "⚠️ Warning: Backend pool health check did not pass within expected time, but continuing..."
+        }
         
         // DO NOT recreate health infrastructure - this breaks health probe associations!
         // The existing health probes and HTTP settings are already correctly configured
