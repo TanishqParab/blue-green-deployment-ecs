@@ -467,20 +467,6 @@ def updateApplication(Map config) {
 
         echo "✅ Container ${env.IDLE_ENV} is ready"
         
-        // Debug: Check what's actually running in the container
-        echo "🔍 Debugging container to check if Flask app is running..."
-        try {
-            sh """
-            echo "Container logs for ${env.IDLE_CONTAINER}:"
-            az container logs --name ${env.IDLE_CONTAINER} --resource-group ${resourceGroup} --tail 20 || echo "Could not get logs"
-            
-            echo "\nContainer details:"
-            az container show --name ${env.IDLE_CONTAINER} --resource-group ${resourceGroup} --query '{State:instanceView.state,RestartCount:instanceView.restartCount,Image:containers[0].image,Command:containers[0].command}' --output table || echo "Could not get details"
-            """
-        } catch (Exception e) {
-            echo "⚠️ Could not debug container: ${e.message}"
-        }
-        
         // DO NOT create or update health probes - this breaks existing associations!
         // The health probes and HTTP settings are already correctly configured by Terraform
         echo "📊 Preserving existing health infrastructure to maintain probe associations"
@@ -632,164 +618,48 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         echo "🎯 Target environment: ${actualTargetEnv}"
         echo "🔁 Switching traffic from ${sourcePoolName} to ${targetPoolName}..."
         
-        // NEW STRATEGY: Move new container IP to the pool that routing rules point to
-        // This avoids needing to update routing rules at all!
-        
-        def newContainerName = "${appName.replace('_', '')}-${actualTargetEnv.toLowerCase()}-container"
-        def newContainerIp = sh(
+        // Get the target container IP
+        def targetContainerName = "${appName.replace('_', '')}-${actualTargetEnv.toLowerCase()}-container"
+        def containerIp = sh(
             script: """
-                az container show --name ${newContainerName} --resource-group ${resourceGroup} --query ipAddress.ip --output tsv
+                az container show --name ${targetContainerName} --resource-group ${resourceGroup} --query ipAddress.ip --output tsv
             """,
             returnStdout: true
         ).trim()
 
-        if (!newContainerIp || newContainerIp == 'None') {
-            error "❌ Could not get container IP for ${newContainerName}"
+        if (!containerIp || containerIp == 'None') {
+            error "❌ Could not get container IP for ${targetContainerName}"
         }
 
-        // Query routing rules to see which backend pool they currently point to
-        def routingRuleName = "${appName}-path-rule"
-        def routingRuleBackendPool = ""
-        
-        try {
-            // First try to get the backend pool name directly
-            def routingRuleBackendPoolName = sh(
-                script: """
-                    az network application-gateway url-path-map rule show \\
-                        --gateway-name ${appGatewayName} \\
-                        --resource-group ${resourceGroup} \\
-                        --path-map-name main-path-map \\
-                        --name ${routingRuleName} \\
-                        --query 'backendAddressPool.id' --output tsv 2>/dev/null
-                """,
-                returnStdout: true
-            ).trim()
-            
-            if (routingRuleBackendPoolName && routingRuleBackendPoolName != 'null' && !routingRuleBackendPoolName.isEmpty()) {
-                // Extract pool name from full Azure resource path
-                routingRuleBackendPool = routingRuleBackendPoolName.contains('/') ? 
-                    routingRuleBackendPoolName.split('/').last() : routingRuleBackendPoolName
-            }
-        } catch (Exception e) {
-            echo "⚠️ Routing rule query failed: ${e.message}"
-        }
-        
-        if (!routingRuleBackendPool || routingRuleBackendPool.isEmpty()) {
-            echo "⚠️ Could not determine routing rule backend pool. Using source pool as fallback."
-            routingRuleBackendPool = sourcePoolName
-        }
-        
-        echo "🔍 Routing rule ${routingRuleName} currently points to: ${routingRuleBackendPool}"
-        
-        // Check which pools currently have targets (backend addresses)
-        def bluePoolHasTargets = bluePoolConfig != '[]' && !bluePoolConfig.contains('"ipAddress": null')
-        def greenPoolHasTargets = greenPoolConfig != '[]' && !greenPoolConfig.contains('"ipAddress": null')
-        
-        echo "🔍 Backend pool status:"
-        echo "  - ${bluePoolName}: ${bluePoolHasTargets ? 'HAS TARGETS' : 'EMPTY'}"
-        echo "  - ${greenPoolName}: ${greenPoolHasTargets ? 'HAS TARGETS' : 'EMPTY'}"
-        echo "  - Routing rule points to: ${routingRuleBackendPool}"
-        
-        // Strategy: Put new container in the pool that routing rules point to
-        def targetPoolForNewContainer = routingRuleBackendPool
-        
-        echo "💡 STRATEGY: Moving new container (${newContainerIp}) to pool ${targetPoolForNewContainer}"
-        echo "💡 This ensures routing rules point to the pool with the new container!"
-        echo "💡 Backend health will show ${targetPoolForNewContainer} as healthy with new container"
-        
-        // Pre-validation: Test new container directly before backend pool update
-        echo "🔍 Pre-validation: Testing new container health before backend pool update..."
-        def testPath = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
-        
-        def containerHealthy = false
-        def maxRetries = 3
-        for (int i = 0; i < maxRetries; i++) {
-            try {
-                sh """
-                    curl -f --connect-timeout 5 --max-time 10 http://${newContainerIp}${testPath}
-                """
-                containerHealthy = true
-                echo "✅ Container health check passed (attempt ${i + 1})"
-                break
-            } catch (Exception e) {
-                echo "⚠️ Container health check failed (attempt ${i + 1}): ${e.message}"
-                if (i < maxRetries - 1) {
-                    echo "⏳ Waiting 10 seconds before retry..."
-                    sleep(10)
-                }
-            }
-        }
-        
-        if (!containerHealthy) {
-            echo "⚠️ Warning: Container health checks failed, but proceeding with backend pool update"
-        }
-        
-        // Move new container IP to the pool that routing rules point to
-        echo "🔄 Updating backend pool with new container IP..."
+        // Update the target backend pool with the container IP
         sh """
             az network application-gateway address-pool update \\
                 --gateway-name ${appGatewayName} \\
                 --resource-group ${resourceGroup} \\
-                --name ${targetPoolForNewContainer} \\
-                --set backendAddresses='[{"ipAddress":"${newContainerIp}"}]'
+                --name ${targetPoolName} \\
+                --set backendAddresses='[{"ipAddress":"${containerIp}"}]'
         """
         
-        echo "✅✅✅ Traffic successfully switched to new container (${newContainerIp}) in ${targetPoolForNewContainer}!"
-        echo "🎯 Routing rules unchanged - they already point to ${targetPoolForNewContainer}"
-        echo "📊 Backend health will show ${targetPoolForNewContainer} as the active pool with new container"
+        // Clear the source backend pool
+        sh """
+            az network application-gateway address-pool update \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --name ${sourcePoolName} \\
+                --set backendAddresses='[]'
+        """
         
-        // Wait for backend pool to stabilize with new container IP
-        echo "⏳ Waiting for backend pool to stabilize with new container IP..."
-        sleep(30) // Initial wait for Azure to process the change
+        echo "✅✅✅ Traffic successfully switched from ${currentEnv} to ${actualTargetEnv} (${containerIp})!"
         
-        // Monitor backend pool health status
-        echo "🔍 Monitoring backend pool health status..."
-        def healthCheckPassed = false
-        def healthCheckRetries = 6 // 6 attempts over 3 minutes
+        // Update routing rules to point to the new active backend pool
+        echo "🔄 Updating routing rules to point to new active environment..."
+        createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
         
-        for (int i = 0; i < healthCheckRetries; i++) {
-            try {
-                def poolHealth = sh(
-                    script: """
-                        az network application-gateway show-backend-health \\
-                            --name ${appGatewayName} \\
-                            --resource-group ${resourceGroup} \\
-                            --query "backendAddressPools[?name=='${targetPoolForNewContainer}'].backendHttpSettingsCollection[0].servers[0].health" \\
-                            --output tsv 2>/dev/null || echo "Unknown"
-                    """,
-                    returnStdout: true
-                ).trim()
-                
-                echo "📊 Backend pool health status (attempt ${i + 1}): ${poolHealth}"
-                
-                if (poolHealth == "Healthy") {
-                    healthCheckPassed = true
-                    echo "✅ Backend pool is healthy!"
-                    break
-                } else {
-                    echo "⏳ Backend pool not yet healthy, waiting 30 seconds..."
-                    sleep(30)
-                }
-            } catch (Exception e) {
-                echo "⚠️ Health check query failed: ${e.message}"
-                sleep(30)
-            }
-        }
-        
-        if (!healthCheckPassed) {
-            echo "⚠️ Warning: Backend pool health check did not pass within expected time, but continuing..."
-        }
-        
-        // DO NOT recreate health infrastructure - this breaks health probe associations!
-        // The existing health probes and HTTP settings are already correctly configured
-        echo "📊 Preserving existing health infrastructure to maintain probe associations"
-        echo "✅ Health probes remain intact - no recreation needed"
-        
-        echo "✅ Traffic switch completed - no routing rule changes needed!"
+        echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
         
         // Post-switch validation
         echo "🔍 Performing post-switch validation..."
-        validateSwitchSuccess(appGatewayName, resourceGroup, appName, newContainerIp, actualTargetEnv)
+        validateSwitchSuccess(appGatewayName, resourceGroup, appName, containerIp, actualTargetEnv)
         
     } catch (Exception e) {
         echo "⚠️ Error switching traffic: ${e.message}"
@@ -955,46 +825,27 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
         
         echo "📝 Updating existing path rule ${existingRuleName} to point to ${backendPoolName}"
         
-        // Try to update the rule in place first (this preserves health probe associations)
-        def updateSuccess = false
-        try {
-            sh """
-            az network application-gateway url-path-map rule update \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --path-map-name main-path-map \\
-                --name ${existingRuleName} \\
-                --address-pool ${backendPoolName}
-            """
-            updateSuccess = true
-            echo "✅ Updated path rule in place (preserving health probe associations)"
-        } catch (Exception updateError) {
-            echo "⚠️ In-place update failed: ${updateError.message}"
-            echo "🔄 Falling back to delete/recreate approach..."
-        }
+        // Delete and recreate the path rule to update it
+        sh """
+        # Delete existing rule
+        az network application-gateway url-path-map rule delete \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name main-path-map \\
+            --name ${existingRuleName} || echo "Rule may not exist"
         
-        // Only if in-place update fails, fall back to delete/recreate
-        if (!updateSuccess) {
-            sh """
-            # Delete existing rule
-            az network application-gateway url-path-map rule delete \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --path-map-name main-path-map \\
-                --name ${existingRuleName} || echo "Rule may not exist"
-            
-            # Recreate rule with new backend pool
-            az network application-gateway url-path-map rule create \\
-                --gateway-name ${appGatewayName} \\
-                --resource-group ${resourceGroup} \\
-                --path-map-name main-path-map \\
-                --name ${existingRuleName} \\
-                --paths "${pathPattern}" \\
-                --address-pool ${backendPoolName} \\
-                --http-settings ${httpSettingsName}
-            """
-            echo "✅ Recreated path rule to point to ${backendPoolName}"
-        }
+        # Recreate rule with new backend pool
+        az network application-gateway url-path-map rule create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --path-map-name main-path-map \\
+            --name ${existingRuleName} \\
+            --paths "${pathPattern}" \\
+            --address-pool ${backendPoolName} \\
+            --http-settings ${httpSettingsName}
+        """
+        
+        echo "✅ Updated path rule to point to ${backendPoolName}"
         
     } catch (Exception e) {
         echo "⚠️ Error updating routing rule: ${e.message}"
@@ -1002,83 +853,7 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
     }
 }
 
-def recreateHealthInfrastructure(String appGatewayName, String resourceGroup, String appName) {
-    try {
-        def probeName = "${appName}-health-probe"
-        def httpSettingsName = "${appName}-http-settings"
-        def appSuffix = appName.replace("app_", "")
-        def healthPath = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
-        
-        echo "🆕 Creating/updating health probe and HTTP settings with correct configuration..."
-        
-        // Create or update health probe with correct configuration
-        sh """
-        az network application-gateway probe create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${probeName} \\
-            --protocol Http \\
-            --host 127.0.0.1 \\
-            --path ${healthPath} \\
-            --interval 30 \\
-            --timeout 10 \\
-            --threshold 3 || echo "Probe may already exist, updating..."
-        """
-        
-        // Create or update HTTP settings with the probe
-        sh """
-        az network application-gateway http-settings create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${httpSettingsName} \\
-            --port 80 \\
-            --protocol Http \\
-            --timeout 30 \\
-            --probe ${probeName} || echo "HTTP settings may already exist, updating..."
-        """
-        
-        echo "✅ Health infrastructure created/updated successfully!"
-        
-    } catch (Exception e) {
-        echo "⚠️ Error recreating health infrastructure: ${e.message}"
-    }
-}
 
-def updateRoutingRuleBackendPool(String appGatewayName, String resourceGroup, String appName, String backendPoolName) {
-    try {
-        def appSuffix = appName.replace("app_", "")
-        def ruleName = "${appName}-path-rule"
-        def httpSettingsName = "${appName}-http-settings"
-        def pathPattern = "/app${appSuffix}*"
-        
-        echo "📝 Updating routing rule ${ruleName} to use backend pool ${backendPoolName}"
-        
-        // Delete and recreate the path rule with new backend pool (preserving HTTP settings)
-        sh """
-        # Delete existing rule
-        az network application-gateway url-path-map rule delete \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --path-map-name main-path-map \\
-            --name ${ruleName} || echo "Rule may not exist"
-        
-        # Recreate rule with new backend pool but same HTTP settings
-        az network application-gateway url-path-map rule create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --path-map-name main-path-map \\
-            --name ${ruleName} \\
-            --paths "${pathPattern}" \\
-            --address-pool ${backendPoolName} \\
-            --http-settings ${httpSettingsName}
-        """
-        
-        echo "✅ Routing rule updated to point to ${backendPoolName}"
-        
-    } catch (Exception e) {
-        echo "⚠️ Error updating routing rule: ${e.message}"
-    }
-}
 
 def validateSwitchSuccess(String appGatewayName, String resourceGroup, String appName, String containerIp, String targetEnv) {
     try {
