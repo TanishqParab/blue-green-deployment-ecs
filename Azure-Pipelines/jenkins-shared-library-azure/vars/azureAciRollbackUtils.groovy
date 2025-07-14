@@ -166,14 +166,21 @@ def prepareRollback(Map config) {
             rollbackTag = previousVersionTag
             echo "✅ Using immediate previous version (second ${currentLatestTag}): ${rollbackTag}"
         } else {
-            // Fallback: use second newest non-rollback image
-            for (int i = 1; i < imagesJson.size(); i++) {
+            echo "⚠️ No second occurrence of ${currentLatestTag} found. Looking for most recent rollback tag..."
+            // Fallback: use most recent rollback tag (which represents a previous version)
+            for (int i = 0; i < imagesJson.size(); i++) {
                 def tag = imagesJson[i]
-                if (!tag.contains('rollback')) {
+                if (tag.contains('rollback')) {
                     rollbackTag = tag
-                    echo "⚠️ Fallback: Using second newest non-rollback image: ${rollbackTag}"
+                    echo "✅ Using most recent rollback tag: ${rollbackTag}"
                     break
                 }
+            }
+            
+            // Final fallback: use second newest image regardless of type
+            if (!rollbackTag && imagesJson.size() >= 2) {
+                rollbackTag = imagesJson[1]
+                echo "⚠️ Final fallback: Using second newest image: ${rollbackTag}"
             }
         }
         
