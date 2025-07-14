@@ -609,15 +609,13 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         
         echo "✅✅✅ Traffic successfully switched from ${currentEnv} to ${actualTargetEnv} (${containerIp})!"
         
-        // First recreate health infrastructure from scratch (before routing rules reference it)
+        // Recreate health infrastructure to ensure correct probe configuration
         echo "🔍 Recreating health infrastructure from scratch..."
         recreateHealthInfrastructure(appGatewayName, resourceGroup, appName)
         
-        // Then update routing rules to point to the new active backend pool
-        echo "🔄 Updating routing rules to point to new active environment..."
-        createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
-        
-        echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
+        // Skip routing rule updates - they break health probe associations and aren't needed
+        // Traffic switching is handled by the backend pool updates above
+        echo "✅ Traffic switch completed - routing rules preserved to maintain health probe associations"
         
         // Post-switch validation
         echo "🔍 Performing post-switch validation..."
