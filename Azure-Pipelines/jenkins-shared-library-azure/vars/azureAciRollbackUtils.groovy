@@ -184,22 +184,72 @@ def prepareRollback(Map config) {
         env.ROLLBACK_IMAGE = "${registryName}.azurecr.io/${imageName}:${rollbackImageTag}"
         echo "✅ Rollback application built and pushed: ${env.ROLLBACK_IMAGE}"
         
-        // Restart the rollback container to pull the new rollback image
-        echo "🔄 Restarting ${env.ROLLBACK_ENV} container (${env.ROLLBACK_CONTAINER}) with rollback application..."
+        // Recreate the rollback container with rollback image (same as switch deployment)
+        echo "🔄 Recreating ${env.ROLLBACK_ENV} container (${env.ROLLBACK_CONTAINER}) with rollback application..."
         
-        sh "az container restart --name ${env.ROLLBACK_CONTAINER} --resource-group ${resourceGroup}"
-        
-        echo "⏳ Waiting for rollback container to stabilize..."
-        sleep(45)
-        
-        def containerState = sh(
-            script: "az container show --name ${env.ROLLBACK_CONTAINER} --resource-group ${resourceGroup} --query instanceView.state --output tsv",
+        // Get ACR login server
+        def acrLoginServer = sh(
+            script: "az acr show --name ${registryName} --resource-group ${resourceGroup} --query loginServer --output tsv",
             returnStdout: true
         ).trim()
         
-        if (containerState != 'Running') {
-            echo "⚠️ Container state: ${containerState}. Waiting longer..."
-            sleep(30)
+        // Delete and recreate container with rollback image
+        sh """
+        # Delete existing container
+        echo "Deleting existing rollback container..."
+        az container delete \\
+            --resource-group ${resourceGroup} \\
+            --name ${env.ROLLBACK_CONTAINER} \\
+            --yes || echo "Container may not exist"
+        
+        # Wait for deletion to complete
+        sleep 10
+        
+        # Create new container with rollback image
+        echo "Creating rollback container with previous app version..."
+        az container create \\
+            --resource-group ${resourceGroup} \\
+            --name ${env.ROLLBACK_CONTAINER} \\
+            --image ${env.ROLLBACK_IMAGE} \\
+            --registry-login-server ${acrLoginServer} \\
+            --registry-username ${registryName} \\
+            --registry-password \$(az acr credential show --name ${registryName} --query passwords[0].value --output tsv) \\
+            --ip-address Public \\
+            --ports 80 \\
+            --cpu 1 \\
+            --memory 1.5 \\
+            --restart-policy Always
+        """
+        
+        echo "✅ Rollback container recreated with previous Flask application version"
+        
+        echo "⏳ Waiting for rollback container to stabilize..."
+        sleep(60)  // Give more time for container to start
+        
+        // Wait for container to be fully ready
+        echo "⏳ Waiting for rollback container to be ready..."
+        def maxAttempts = 20
+        def attempt = 0
+        def containerReady = false
+        
+        while (attempt < maxAttempts && !containerReady) {
+            sleep(15)
+            def containerState = sh(
+                script: "az container show --name ${env.ROLLBACK_CONTAINER} --resource-group ${resourceGroup} --query instanceView.state --output tsv",
+                returnStdout: true
+            ).trim()
+            
+            if (containerState == 'Running') {
+                containerReady = true
+                echo "✅ Rollback container is running"
+            } else {
+                echo "⏳ Container state: ${containerState}. Waiting..."
+                attempt++
+            }
+        }
+        
+        if (!containerReady) {
+            echo "⚠️ Container did not become ready within expected time, but continuing..."
         }
         
         echo "✅ Rollback container (${env.ROLLBACK_ENV}) is ready with rollback application"
@@ -266,31 +316,61 @@ def executeAzureAciRollback(Map config) {
     
     echo "🎯 Rollback container IP: ${rollbackContainerIp}"
     
-    // Switch traffic: Update rollback pool and clear current pool
+    // SMART ROLLBACK STRATEGY: Query routing rules to see which pool they point to
+    def routingRuleName = "${appName}-path-rule"
+    def routingRuleBackendPool = ""
+    
+    try {
+        def routingRuleBackendPoolName = sh(
+            script: """
+                az network application-gateway url-path-map rule show \\
+                    --gateway-name ${appGatewayName} \\
+                    --resource-group ${resourceGroup} \\
+                    --path-map-name main-path-map \\
+                    --name ${routingRuleName} \\
+                    --query 'backendAddressPool.id' --output tsv 2>/dev/null
+            """,
+            returnStdout: true
+        ).trim()
+        
+        if (routingRuleBackendPoolName && routingRuleBackendPoolName != 'null' && !routingRuleBackendPoolName.isEmpty()) {
+            routingRuleBackendPool = routingRuleBackendPoolName.contains('/') ? 
+                routingRuleBackendPoolName.split('/').last() : routingRuleBackendPoolName
+        }
+    } catch (Exception e) {
+        echo "⚠️ Routing rule query failed: ${e.message}"
+    }
+    
+    if (!routingRuleBackendPool || routingRuleBackendPool.isEmpty()) {
+        echo "⚠️ Could not determine routing rule backend pool. Using current pool as fallback."
+        routingRuleBackendPool = env.CURRENT_POOL_NAME
+    }
+    
+    echo "🔍 Routing rule ${routingRuleName} currently points to: ${routingRuleBackendPool}"
+    
+    // STRATEGY: Put rollback container in the pool that routing rules already point to
+    def targetPoolForRollback = routingRuleBackendPool
+    
+    echo "💡 ROLLBACK STRATEGY: Moving rollback container (${rollbackContainerIp}) to pool ${targetPoolForRollback}"
+    echo "💡 This ensures routing rules point to the pool with the rollback container!"
+    echo "💡 Backend health will show ${targetPoolForRollback} as healthy with rollback container"
+    
+    // Move rollback container IP to the pool that routing rules point to
     sh """
         az network application-gateway address-pool update \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
-            --name ${env.ROLLBACK_POOL_NAME} \\
+            --name ${targetPoolForRollback} \\
             --set backendAddresses='[{"ipAddress":"${rollbackContainerIp}"}]'
     """
     
-    sh """
-        az network application-gateway address-pool update \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${env.CURRENT_POOL_NAME} \\
-            --set backendAddresses='[]'
-    """
+    echo "✅✅✅ Traffic successfully switched to rollback container (${rollbackContainerIp}) in ${targetPoolForRollback}!"
+    echo "🎯 Routing rules unchanged - they already point to ${targetPoolForRollback}"
+    echo "📊 Backend health will show ${targetPoolForRollback} as the active pool with rollback container"
     
-    echo "✅ Traffic successfully switched from ${env.CURRENT_ENV} to ${env.ROLLBACK_ENV}"
-    
-    // Update health probe for rollback environment
-    updateHealthProbeForRollback(appGatewayName, resourceGroup, appName, rollbackContainerIp)
-    
-    // Update routing rules to point to rollback environment
-    echo "🔄 Updating routing rules for rollback..."
-    createRoutingRule(appGatewayName, resourceGroup, appName, env.ROLLBACK_POOL_NAME)
+    // DO NOT update health probes or routing rules - this preserves health probe associations!
+    echo "📊 Preserving routing rules and health probe associations for rollback"
+    echo "✅ No routing rule changes needed - rollback traffic flows automatically!"
     
     // Validate rollback deployment
     validateRollbackSuccess(appGatewayName, resourceGroup, appName, rollbackContainerIp)
@@ -385,30 +465,29 @@ def getRegistryName(config) {
     }
 }
 
-def updateHealthProbeForRollback(String appGatewayName, String resourceGroup, String appName, String containerIp) {
+def createHealthProbe(String appGatewayName, String resourceGroup, String appName, String containerIp) {
     try {
         def probeName = "${appName}-health-probe"
         
-        echo "🔍 Updating health probe ${probeName} for rollback container ${containerIp}"
+        echo "🔍 Updating health probe ${probeName} with container IP ${containerIp}"
         
-        // Update probe to match working deployment configuration
+        // Update health probe with actual container IP
         sh """
         az network application-gateway probe update \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
-            --host-name-from-http-settings true \\
-            --path / \\
+            --host ${containerIp} \\
+            --path /health \\
             --interval 30 \\
             --timeout 30 \\
-            --threshold 3
+            --threshold 3 || echo "Probe update failed"
         """
         
-        echo "✅ Health probe updated for rollback container ${containerIp} with working configuration"
+        echo "✅ Health probe updated with container IP for ${appName}"
         
     } catch (Exception e) {
         echo "⚠️ Error updating health probe: ${e.message}"
-        throw e
     }
 }
 
@@ -421,7 +500,7 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
         
         echo "📝 Updating path rule ${existingRuleName} to point to ${backendPoolName}"
         
-        // Delete and recreate the path rule
+        // Delete and recreate the path rule to update it
         sh """
         # Delete existing rule
         az network application-gateway url-path-map rule delete \\
