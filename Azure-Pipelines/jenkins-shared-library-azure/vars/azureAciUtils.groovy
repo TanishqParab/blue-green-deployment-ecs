@@ -397,33 +397,89 @@ def updateApplication(Map config) {
         env.IMAGE_URI = "${registryName}.azurecr.io/${imageName}:${imageTag}"
         echo "✅ Image pushed: ${env.IMAGE_URI}"
 
-        // Step 4: Update ACI Container
-        echo "Updating ${env.IDLE_ENV} container (${env.IDLE_CONTAINER})..."
+        // Step 4: Update ACI Container by recreating it (like initial deployment)
+        echo "Updating ${env.IDLE_ENV} container (${env.IDLE_CONTAINER}) by recreating with new image..."
 
-        // Restart container to pull new image
-        sh """
-        az container restart \\
-            --name ${env.IDLE_CONTAINER} \\
-            --resource-group ${resourceGroup}
-        """
-
-        echo "✅ Updated container ${env.IDLE_ENV} with new image"
-
-        echo "Waiting for ${env.IDLE_ENV} container to stabilize..."
-        sleep(30)
-        
-        // Verify the container is running
-        def containerState = sh(
-            script: "az container show --name ${env.IDLE_CONTAINER} --resource-group ${resourceGroup} --query instanceView.state --output tsv",
+        // Get ACR login server
+        def acrLoginServer = sh(
+            script: "az acr show --name ${registryName} --resource-group ${resourceGroup} --query loginServer --output tsv",
             returnStdout: true
         ).trim()
 
-        if (containerState != 'Running') {
-            echo "⚠️ Container state: ${containerState}. Waiting longer..."
-            sleep(30)
+        // Recreate container with new image (same approach as initial deployment)
+        sh """
+        # Delete existing container
+        echo "Deleting existing container..."
+        az container delete \\
+            --resource-group ${resourceGroup} \\
+            --name ${env.IDLE_CONTAINER} \\
+            --yes || echo "Container may not exist"
+        
+        # Wait for deletion to complete
+        sleep 10
+        
+        # Create new container with updated image
+        echo "Creating container with new Flask app image..."
+        az container create \\
+            --resource-group ${resourceGroup} \\
+            --name ${env.IDLE_CONTAINER} \\
+            --image ${acrLoginServer}/${imageName}:${imageTag} \\
+            --registry-login-server ${acrLoginServer} \\
+            --registry-username ${registryName} \\
+            --registry-password \$(az acr credential show --name ${registryName} --query passwords[0].value --output tsv) \\
+            --ip-address Public \\
+            --ports 80 \\
+            --cpu 1 \\
+            --memory 1.5 \\
+            --restart-policy Always
+        """
+
+        echo "✅ Container recreated with new Flask application image"
+
+        echo "Waiting for ${env.IDLE_ENV} container to stabilize..."
+        sleep(60)  // Give more time for container to start and pull new image
+        
+        // Wait for container to be fully ready
+        echo "⏳ Waiting for container to be ready..."
+        def maxAttempts = 20
+        def attempt = 0
+        def containerReady = false
+        
+        while (attempt < maxAttempts && !containerReady) {
+            sleep(15)
+            def containerState = sh(
+                script: "az container show --name ${env.IDLE_CONTAINER} --resource-group ${resourceGroup} --query instanceView.state --output tsv",
+                returnStdout: true
+            ).trim()
+            
+            if (containerState == 'Running') {
+                containerReady = true
+                echo "✅ Container is running"
+            } else {
+                echo "⏳ Container state: ${containerState}. Waiting..."
+                attempt++
+            }
+        }
+        
+        if (!containerReady) {
+            echo "⚠️ Container did not become ready within expected time, but continuing..."
         }
 
         echo "✅ Container ${env.IDLE_ENV} is ready"
+        
+        // Debug: Check what's actually running in the container
+        echo "🔍 Debugging container to check if Flask app is running..."
+        try {
+            sh """
+            echo "Container logs for ${env.IDLE_CONTAINER}:"
+            az container logs --name ${env.IDLE_CONTAINER} --resource-group ${resourceGroup} --tail 20 || echo "Could not get logs"
+            
+            echo "\nContainer details:"
+            az container show --name ${env.IDLE_CONTAINER} --resource-group ${resourceGroup} --query '{State:instanceView.state,RestartCount:instanceView.restartCount,Image:containers[0].image,Command:containers[0].command}' --output table || echo "Could not get details"
+            """
+        } catch (Exception e) {
+            echo "⚠️ Could not debug container: ${e.message}"
+        }
         
         // DO NOT create or update health probes - this breaks existing associations!
         // The health probes and HTTP settings are already correctly configured by Terraform
