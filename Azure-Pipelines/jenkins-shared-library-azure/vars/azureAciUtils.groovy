@@ -609,14 +609,13 @@ def switchTrafficToTargetEnv(String targetEnv, String bluePoolName, String green
         
         echo "✅✅✅ Traffic successfully switched from ${currentEnv} to ${actualTargetEnv} (${containerIp})!"
         
-        // Update routing rules to point to the new active backend pool
+        // First recreate health infrastructure from scratch (before routing rules reference it)
+        echo "🔍 Recreating health infrastructure from scratch..."
+        recreateHealthInfrastructure(appGatewayName, resourceGroup, appName)
+        
+        // Then update routing rules to point to the new active backend pool
         echo "🔄 Updating routing rules to point to new active environment..."
         createRoutingRule(appGatewayName, resourceGroup, appName, targetPoolName)
-        
-        // Immediately recreate health probe to fix broken association
-        echo "🔍 Recreating health probe to restore association..."
-        sleep(5) // Brief pause for routing rule to settle
-        createHealthProbe(appGatewayName, resourceGroup, appName)
         
         echo "✅ Routing rules updated to point to ${actualTargetEnv} environment"
         
@@ -743,46 +742,36 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
     try {
         def probeName = "${appName}-health-probe"
         def httpSettingsName = "${appName}-http-settings"
-        def appSuffix = appName.replace("app_", "")
-        def healthPath = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
         
-        echo "🔍 Creating health probe ${probeName} with path ${healthPath}"
+        echo "🔍 Creating health probe ${probeName}"
         
-        // Delete existing probe first to ensure clean recreation
-        sh """
-        az network application-gateway probe delete \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --name ${probeName} || echo "Probe may not exist"
-        """
-        
-        // Wait for deletion to complete
-        sleep(3)
-        
-        // Create health probe with correct configuration (matching what works in Azure)
+        // Create health probe
         sh """
         az network application-gateway probe create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${probeName} \\
             --protocol Http \\
-            --host 127.0.0.1 \\
-            --path ${healthPath} \\
+            --host-name-from-http-settings true \\
+            --path / \\
             --interval 30 \\
-            --timeout 10 \\
-            --threshold 3
+            --timeout 30 \\
+            --threshold 3 || echo "Probe may already exist"
         """
         
-        // Update HTTP settings to use the new probe
+        // Create HTTP settings with the probe
         sh """
-        az network application-gateway http-settings update \\
+        az network application-gateway http-settings create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --name ${httpSettingsName} \\
-            --probe ${probeName}
+            --port 80 \\
+            --protocol Http \\
+            --timeout 30 \\
+            --probe ${probeName} || echo "HTTP settings may already exist"
         """
         
-        echo "✅ Created health probe and updated HTTP settings for ${appName}"
+        echo "✅ Created health probe and HTTP settings for ${appName}"
         
     } catch (Exception e) {
         echo "⚠️ Error creating health probe: ${e.message}"
@@ -792,27 +781,27 @@ def createHealthProbe(String appGatewayName, String resourceGroup, String appNam
 def createRoutingRule(String appGatewayName, String resourceGroup, String appName, String backendPoolName) {
     try {
         def appSuffix = appName.replace("app_", "")
-        def ruleName = "${appName}-path-rule"  // Match what actually exists in Azure
+        def existingRuleName = "${appName}-path-rule"
         def httpSettingsName = "${appName}-http-settings"
         def pathPattern = "/app${appSuffix}*"
         
-        echo "📝 Updating existing path rule ${ruleName} to point to ${backendPoolName}"
+        echo "📝 Updating existing path rule ${existingRuleName} to point to ${backendPoolName}"
         
-        // Delete and recreate the path rule to update it (using correct path map name)
+        // Delete and recreate the path rule to update it
         sh """
         # Delete existing rule
         az network application-gateway url-path-map rule delete \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --path-map-name main-path-map \\
-            --name ${ruleName} || echo "Rule may not exist"
+            --name ${existingRuleName} || echo "Rule may not exist"
         
         # Recreate rule with new backend pool
         az network application-gateway url-path-map rule create \\
             --gateway-name ${appGatewayName} \\
             --resource-group ${resourceGroup} \\
             --path-map-name main-path-map \\
-            --name ${ruleName} \\
+            --name ${existingRuleName} \\
             --paths "${pathPattern}" \\
             --address-pool ${backendPoolName} \\
             --http-settings ${httpSettingsName}
@@ -826,7 +815,47 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
     }
 }
 
-
+def recreateHealthInfrastructure(String appGatewayName, String resourceGroup, String appName) {
+    try {
+        def probeName = "${appName}-health-probe"
+        def httpSettingsName = "${appName}-http-settings"
+        def appSuffix = appName.replace("app_", "")
+        def healthPath = appSuffix == "1" ? "/health" : "/app${appSuffix}/health"
+        
+        echo "🆕 Creating/updating health probe and HTTP settings with correct configuration..."
+        
+        // Create or update health probe with correct configuration
+        sh """
+        az network application-gateway probe create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${probeName} \\
+            --protocol Http \\
+            --host 127.0.0.1 \\
+            --path ${healthPath} \\
+            --interval 30 \\
+            --timeout 10 \\
+            --threshold 3 || echo "Probe may already exist, updating..."
+        """
+        
+        // Create or update HTTP settings with the probe
+        sh """
+        az network application-gateway http-settings create \\
+            --gateway-name ${appGatewayName} \\
+            --resource-group ${resourceGroup} \\
+            --name ${httpSettingsName} \\
+            --port 80 \\
+            --protocol Http \\
+            --timeout 30 \\
+            --probe ${probeName} || echo "HTTP settings may already exist, updating..."
+        """
+        
+        echo "✅ Health infrastructure created/updated successfully!"
+        
+    } catch (Exception e) {
+        echo "⚠️ Error recreating health infrastructure: ${e.message}"
+    }
+}
 
 def validateSwitchSuccess(String appGatewayName, String resourceGroup, String appName, String containerIp, String targetEnv) {
     try {
