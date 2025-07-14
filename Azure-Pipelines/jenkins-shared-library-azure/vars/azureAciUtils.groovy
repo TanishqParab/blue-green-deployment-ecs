@@ -787,27 +787,46 @@ def createRoutingRule(String appGatewayName, String resourceGroup, String appNam
         
         echo "📝 Updating existing path rule ${existingRuleName} to point to ${backendPoolName}"
         
-        // Delete and recreate the path rule to update it
-        sh """
-        # Delete existing rule
-        az network application-gateway url-path-map rule delete \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --path-map-name main-path-map \\
-            --name ${existingRuleName} || echo "Rule may not exist"
+        // Try to update the rule in place first (this preserves health probe associations)
+        def updateSuccess = false
+        try {
+            sh """
+            az network application-gateway url-path-map rule update \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --path-map-name main-path-map \\
+                --name ${existingRuleName} \\
+                --address-pool ${backendPoolName}
+            """
+            updateSuccess = true
+            echo "✅ Updated path rule in place (preserving health probe associations)"
+        } catch (Exception updateError) {
+            echo "⚠️ In-place update failed: ${updateError.message}"
+            echo "🔄 Falling back to delete/recreate approach..."
+        }
         
-        # Recreate rule with new backend pool
-        az network application-gateway url-path-map rule create \\
-            --gateway-name ${appGatewayName} \\
-            --resource-group ${resourceGroup} \\
-            --path-map-name main-path-map \\
-            --name ${existingRuleName} \\
-            --paths "${pathPattern}" \\
-            --address-pool ${backendPoolName} \\
-            --http-settings ${httpSettingsName}
-        """
-        
-        echo "✅ Updated path rule to point to ${backendPoolName}"
+        // Only if in-place update fails, fall back to delete/recreate
+        if (!updateSuccess) {
+            sh """
+            # Delete existing rule
+            az network application-gateway url-path-map rule delete \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --path-map-name main-path-map \\
+                --name ${existingRuleName} || echo "Rule may not exist"
+            
+            # Recreate rule with new backend pool
+            az network application-gateway url-path-map rule create \\
+                --gateway-name ${appGatewayName} \\
+                --resource-group ${resourceGroup} \\
+                --path-map-name main-path-map \\
+                --name ${existingRuleName} \\
+                --paths "${pathPattern}" \\
+                --address-pool ${backendPoolName} \\
+                --http-settings ${httpSettingsName}
+            """
+            echo "✅ Recreated path rule to point to ${backendPoolName}"
+        }
         
     } catch (Exception e) {
         echo "⚠️ Error updating routing rule: ${e.message}"
