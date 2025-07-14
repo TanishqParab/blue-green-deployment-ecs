@@ -359,9 +359,8 @@ def executeAzureAciRollback(Map config) {
     
     echo "🔄 Step 3: Updating routing rules to point to rollback pool..."
     def routingRuleName = "${appName}-path-rule"
-    def appSuffix = appName.replace("app_", "")
     def httpSettingsName = "${appName}-http-settings"
-    def pathPattern = "/app${appSuffix}*"
+    def pathPattern = "/app${appName.replace('app_', '')}*"
     
     sh """
         # Delete existing rule
