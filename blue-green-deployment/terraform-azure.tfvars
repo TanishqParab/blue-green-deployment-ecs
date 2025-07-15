@@ -154,8 +154,6 @@ azure_vm = {
   # Basic VM settings
   vm_size        = "Standard_B1s"
   admin_username = "azureuser"
-  # ssh_key_name is hardcoded in implementation
-  # admin_password and ssh_public_key retrieved from Key Vault
 
   # Multiple applications configuration
   vm_application = {
@@ -191,7 +189,7 @@ azure_acr = {
   registry_name     = "bluegreenacrregistry"
   sku               = "Basic"
   admin_enabled     = true
-  skip_docker_build = false # Set to true to disable Docker build (for Jenkins pipeline), false for manual testing
+  skip_docker_build = true # Set to true to disable Docker build (for Jenkins pipeline), false for manual testing
 
   # Multiple applications configuration
   application = {
