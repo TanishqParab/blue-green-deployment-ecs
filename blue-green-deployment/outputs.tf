@@ -1,6 +1,6 @@
 # outputs.tf - Terraform outputs for Azure resources
 
-/*
+
 # Azure VM Specific Outputs (commented out for ACI implementation)
 output "resource_group_name" {
   description = "Name of the Azure resource group"
@@ -26,8 +26,8 @@ output "green_vm_ips" {
   description = "Public IPs of green VMs"
   value       = try(module.azure_vm_implementation[0].green_vm_ips, {})
 }
-*/
 
+/*
 # Azure ACI Specific Outputs
 output "resource_group_name" {
   description = "Name of the Azure resource group"
@@ -71,3 +71,5 @@ output "backend_pools" {
     app_3_green = "app_3-green-pool"
   }
 }
+
+*/
