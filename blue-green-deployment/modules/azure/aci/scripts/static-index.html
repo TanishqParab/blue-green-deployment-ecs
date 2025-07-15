@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blue-Green Deployment</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            padding: 50px;
+            margin: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255,255,255,0.1);
+            padding: 40px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+        }
+        h1 { font-size: 3em; margin-bottom: 20px; }
+        .apps { display: flex; justify-content: center; gap: 20px; margin-top: 30px; }
+        .app-link {
+            background: rgba(255,255,255,0.2);
+            padding: 15px 25px;
+            border-radius: 10px;
+            text-decoration: none;
+            color: white;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        .app-link:hover { background: rgba(255,255,255,0.3); transform: translateY(-2px); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Blue-Green Deployment</h1>
+        <p>Welcome to the Multi-Cloud Blue-Green Deployment Demo</p>
+        <p>Choose an application to test:</p>
+        <div class="apps">
+            <a href="/app1/" class="app-link">📱 App 1</a>
+            <a href="/app2/" class="app-link">📱 App 2</a>
+            <a href="/app3/" class="app-link">📱 App 3</a>
+        </div>
+        <p style="margin-top: 30px; opacity: 0.8;">
+            <small>Powered by Azure Container Instances & Application Gateway</small>
+        </p>
+    </div>
+</body>
+</html>
