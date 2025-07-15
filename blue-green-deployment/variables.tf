@@ -737,9 +737,7 @@ variable "azure_vm" {
   type = object({
     vm_size             = string
     admin_username      = string
-    admin_password      = string
-    ssh_key_name        = string
-    ssh_public_key      = string
+    # admin_password and ssh_public_key retrieved from Key Vault
     
     vm_application = map(object({
       blue_vm_name  = string
@@ -753,9 +751,6 @@ variable "azure_vm" {
   default = {
     vm_size         = "Standard_B2s"
     admin_username  = "azureuser"
-    admin_password  = ""
-    ssh_key_name    = "azure-ssh-key"
-    ssh_public_key  = ""
     vm_application  = {}
     module_name     = "azure-vm"
     terraform_managed = "true"
