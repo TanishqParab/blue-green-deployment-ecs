@@ -59,6 +59,8 @@ output "registry_name" {
   value       = try(module.azure_aci_implementation[0].registry_name, null)
 }
 
+*/
+
 # Backend Pool Names
 output "backend_pools" {
   description = "Application Gateway backend pool names"
@@ -72,4 +74,4 @@ output "backend_pools" {
   }
 }
 
-*/
+
